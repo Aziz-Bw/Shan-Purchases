@@ -4,7 +4,7 @@ from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, date
 
 # --- 1. إعدادات الصفحة ---
-st.set_page_config(page_title="إدارة المشتريات والمدفوعات", layout="wide", page_icon="📦")
+st.set_page_config(page_title="إدارة المشتريات (تعديل كامل)", layout="wide", page_icon="📦")
 
 st.markdown("""
 <style>
@@ -18,14 +18,15 @@ st.markdown("""
     .metric-title { font-size: 14px; color: #666; margin-bottom: 5px; }
     .metric-value { font-size: 24px; font-weight: bold; color: #034275; }
     
-    /* تنسيق جدول الخطة */
     .plan-box {
         background-color: #f8f9fa; border-right: 4px solid #27ae60;
         padding: 10px; margin-bottom: 10px; border-radius: 5px;
     }
     
-    .stTextInput > div > div > input { text-align: right; }
-    .stNumberInput > div > div > input { text-align: center; }
+    /* تحسين زر الحفظ */
+    div.stButton > button:first-child {
+        border-radius: 5px; font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -35,10 +36,8 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_data():
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
-        if df.empty:
-            return pd.DataFrame()
-            
-        # الأعمدة المطلوبة (بما فيها الجديدة لنسب الدفع)
+        if df.empty: return pd.DataFrame()
+        
         required_cols = [
             "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", "القيمة_ريال", 
             "المدفوع", "المتبقي", "الحالة", "تاريخ_الوصول", "ملاحظات",
@@ -47,14 +46,12 @@ def load_data():
         for col in required_cols:
             if col not in df.columns: df[col] = None
         
-        # تحويل الأرقام
         numeric_cols = ["القيمة_دولار", "سعر_الصرف", "القيمة_ريال", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
         return df
     except:
-        # إنشاء هيكل جديد إذا فشل التحميل
         return pd.DataFrame(columns=[
             "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", "القيمة_ريال", 
             "المدفوع", "المتبقي", "الحالة", "تاريخ_الوصول", "ملاحظات",
@@ -64,34 +61,27 @@ def load_data():
 df = load_data()
 
 # --- 3. الواجهة الرئيسية ---
-st.title("📦 نظام إدارة المشتريات (تخطيط الدفعات)")
+st.title("📦 نظام إدارة المشتريات (تحكم كامل)")
 
+# القائمة الجانبية (إضافة جديد)
 with st.sidebar:
     st.header("📝 تسجيل طلبية جديدة")
-    
     with st.form("add_order_form"):
         order_name = st.text_input("اسم الطلبية / الصنف")
         supplier = st.text_input("اسم المورد")
-        
         c1, c2 = st.columns(2)
         val_usd = c1.number_input("قيمة الفاتورة ($)", min_value=0.0, step=100.0)
         rate = c2.number_input("سعر الصرف", value=3.75, step=0.01)
-        
         st.markdown("---")
-        st.markdown("###### 📊 خطة الدفع المقترحة (النسب)")
+        st.markdown("###### 📊 خطة الدفع (النسب)")
         p1, p2, p3 = st.columns(3)
-        pct_start = p1.number_input("اعتماد %", value=30, min_value=0, max_value=100)
-        pct_ship = p2.number_input("شحن %", value=20, min_value=0, max_value=100)
-        pct_arrive = p3.number_input("وصول %", value=50, min_value=0, max_value=100)
-        
-        if (pct_start + pct_ship + pct_arrive) != 100:
-            st.error(f"تنبيه: مجموع النسب = {pct_start + pct_ship + pct_arrive}% (يجب أن يكون 100%)")
-        
+        pct_start = p1.number_input("اعتماد %", value=30)
+        pct_ship = p2.number_input("شحن %", value=20)
+        pct_arrive = p3.number_input("وصول %", value=50)
         st.markdown("---")
-        arrival_date = st.date_input("تاريخ الوصول المتوقع")
+        arrival_date = st.date_input("تاريخ الوصول")
         status = st.selectbox("حالة الشحنة", ["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"])
-        notes = st.text_area("ملاحظات إضافية")
-        
+        notes = st.text_area("ملاحظات")
         submitted = st.form_submit_button("💾 حفظ الطلبية")
         
         if submitted:
@@ -102,31 +92,17 @@ with st.sidebar:
                     new_id = int(df['ID'].max()) + 1
                 
                 new_row = pd.DataFrame([{
-                    "ID": new_id,
-                    "الطلبية": order_name,
-                    "المورد": supplier,
-                    "القيمة_دولار": val_usd,
-                    "سعر_الصرف": rate,
-                    "القيمة_ريال": val_sar,
-                    "المدفوع": 0.0,
-                    "المتبقي": val_sar,
-                    "الحالة": status,
-                    "تاريخ_الوصول": str(arrival_date),
-                    "ملاحظات": notes,
-                    "نسبة_اعتماد": pct_start,
-                    "نسبة_شحن": pct_ship,
-                    "نسبة_وصول": pct_arrive
+                    "ID": new_id, "الطلبية": order_name, "المورد": supplier,
+                    "القيمة_دولار": val_usd, "سعر_الصرف": rate, "القيمة_ريال": val_sar,
+                    "المدفوع": 0.0, "المتبقي": val_sar, "الحالة": status,
+                    "تاريخ_الوصول": str(arrival_date), "ملاحظات": notes,
+                    "نسبة_اعتماد": pct_start, "نسبة_شحن": pct_ship, "نسبة_وصول": pct_arrive
                 }])
-                
                 updated_df = pd.concat([df, new_row], ignore_index=True)
                 conn.update(worksheet="Sheet1", data=updated_df)
-                st.success("تمت الإضافة بنجاح!")
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.error("الرجاء إدخال البيانات الأساسية.")
+                st.success("تمت الإضافة!"); st.cache_data.clear(); st.rerun()
 
-# --- 4. لوحة المعلومات (KPIs) ---
+# --- 4. مؤشرات الأداء ---
 if not df.empty:
     total_commitment = df['القيمة_ريال'].sum()
     total_paid = df['المدفوع'].sum()
@@ -143,89 +119,103 @@ k4.markdown(f'<div class="metric-card"><div class="metric-title">طلبات نش
 
 st.divider()
 
-# --- 5. منطقة العمل (التفاصيل والتحويلات) ---
+# --- 5. منطقة العمل (التعديل + تسجيل الحوالات) ---
 c_left, c_right = st.columns([1.5, 1])
 
 with c_left:
-    st.subheader("📋 سجل الطلبات الحالي")
+    st.subheader("📋 سجل الطلبات (قابل للتعديل)")
+    st.info("💡 يمكنك تعديل البيانات الأساسية هنا مباشرة (مثل الاسم، القيمة، النسب، التواريخ).")
+    
     if not df.empty:
-        display_df = df[['ID', 'الطلبية', 'المورد', 'القيمة_ريال', 'المدفوع', 'المتبقي', 'الحالة']].copy()
-        st.dataframe(
-            display_df,
+        # عرض البيانات في محرر
+        edited_df = st.data_editor(
+            df,
+            num_rows="dynamic",
             use_container_width=True,
-            hide_index=True,
             column_config={
-                "ID": st.column_config.NumberColumn("#", width="small"),
-                "القيمة_ريال": st.column_config.ProgressColumn("القيمة", format="%.0f", min_value=0, max_value=max(int(df['القيمة_ريال'].max()), 1000)),
-                "المدفوع": st.column_config.NumberColumn(format="%.0f"),
-                "المتبقي": st.column_config.NumberColumn(format="%.0f"),
-            }
+                "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
+                "الطلبية": st.column_config.TextColumn(width="medium"),
+                "القيمة_دولار": st.column_config.NumberColumn("قيمة ($)", format="%.2f"),
+                "سعر_الصرف": st.column_config.NumberColumn("صرف", format="%.2f"),
+                "القيمة_ريال": st.column_config.NumberColumn("قيمة (ريال)", format="%.0f", disabled=True), # ممنوع التعديل لأنه محسوب
+                "المدفوع": st.column_config.NumberColumn(format="%.0f", disabled=True), # التعديل من النموذج الأيمن
+                "المتبقي": st.column_config.NumberColumn(format="%.0f", disabled=True),
+                "الحالة": st.column_config.SelectboxColumn(options=["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"]),
+                "نسبة_اعتماد": st.column_config.NumberColumn("% اعتماد", width="small"),
+                "نسبة_شحن": st.column_config.NumberColumn("% شحن", width="small"),
+                "نسبة_وصول": st.column_config.NumberColumn("% وصول", width="small"),
+            },
+            key="main_editor"
         )
+        
+        # زر حفظ التعديلات اليدوية
+        if st.button("💾 حفظ تعديلات الجدول"):
+            # إعادة حساب الأعمدة المرتبطة (في حال غيرت الدولار أو الصرف)
+            edited_df['القيمة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
+            edited_df['المتبقي'] = edited_df['القيمة_ريال'] - edited_df['المدفوع']
+            
+            conn.update(worksheet="Sheet1", data=edited_df)
+            st.success("تم تحديث البيانات وإعادة الحساب بنجاح!")
+            st.cache_data.clear()
+            st.rerun()
     else:
-        st.info("ابدأ بإضافة الطلبيات من القائمة الجانبية.")
+        st.info("لا توجد بيانات. ابدأ بالإضافة من اليمين.")
 
 with c_right:
-    st.subheader("💸 تسجيل الحوالات والدفعات")
+    st.subheader("💸 تسجيل الحوالات البنكية")
+    st.caption("اختر الطلبية لتسجيل مبلغ تم تحويله فعلياً")
     
     if not df.empty:
         order_options = df['ID'].astype(str) + " - " + df['الطلبية']
-        selected_option = st.selectbox("اختر الطلبية لتسجيل تحويل:", order_options)
+        selected_option = st.selectbox("تحديد الطلبية:", order_options)
         
         if selected_option:
             selected_id = int(str(selected_option).split(" - ")[0])
             current_order = df[df['ID'] == selected_id].iloc[0]
             
-            # --- عرض خطة الدفع ومقارنتها بالمدفوع ---
             total_val = current_order['القيمة_ريال']
             paid_val = current_order['المدفوع']
             
-            # حساب قيم الدفعات بناء على النسب
+            # تحليل الدفعات
             amount_start = total_val * (current_order['نسبة_اعتماد'] / 100)
             amount_ship = total_val * (current_order['نسبة_شحن'] / 100)
             amount_arrive = total_val * (current_order['نسبة_وصول'] / 100)
             
             st.markdown(f"""
             <div class="plan-box">
-            <b>💰 تحليل الموقف المالي للطلبية:</b><br>
-            • دفعة الاعتماد ({current_order['نسبة_اعتماد']:.0f}%): <b>{amount_start:,.0f}</b> ريال<br>
-            • دفعة الشحن ({current_order['نسبة_شحن']:.0f}%): <b>{amount_ship:,.0f}</b> ريال<br>
-            • دفعة الوصول ({current_order['نسبة_وصول']:.0f}%): <b>{amount_arrive:,.0f}</b> ريال<br>
-            <hr style="margin:5px 0;">
-            ✅ <b>إجمالي ما تم تحويله سابقاً: {paid_val:,.0f} ريال</b>
+            <b>مطلوب سداده حسب الخطة:</b><br>
+            1️⃣ اعتماد: {amount_start:,.0f} ريال<br>
+            2️⃣ شحن: {amount_ship:,.0f} ريال<br>
+            3️⃣ وصول: {amount_arrive:,.0f} ريال<br>
+            <hr>
+            ✅ <b>المدفوع فعلياً: {paid_val:,.0f} ريال</b>
             </div>
             """, unsafe_allow_html=True)
             
-            # نموذج تسجيل الحوالة
             with st.form("payment_form"):
-                new_transfer = st.number_input("تسجيل حوالة بنكية جديدة (ريال)", min_value=0.0, step=1000.0)
-                update_status = st.selectbox("تحديث الحالة", ["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"], index=["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"].index(current_order['الحالة']) if current_order['الحالة'] in ["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"] else 0)
+                new_transfer = st.number_input("مبلغ الحوالة (ريال)", min_value=0.0, step=1000.0)
+                update_status_pay = st.selectbox("تحديث الحالة", ["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"], index=["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"].index(current_order['الحالة']) if current_order['الحالة'] in ["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"] else 0)
                 
-                confirm_pay = st.form_submit_button("تأكيد وتسجيل الحوالة")
-                
-                if confirm_pay:
+                if st.form_submit_button("تسجيل الحوالة"):
                     idx = df.index[df['ID'] == selected_id][0]
+                    new_total = paid_val + new_transfer
                     
-                    new_total_paid = paid_val + new_transfer
-                    
-                    if new_total_paid > total_val:
-                        st.error("تنبيه: المبلغ المدفوع يتجاوز قيمة الطلبية!")
+                    if new_total > total_val:
+                        st.error("المبلغ أكبر من قيمة الطلبية!")
                     else:
-                        df.at[idx, 'المدفوع'] = new_total_paid
-                        df.at[idx, 'المتبقي'] = total_val - new_total_paid
-                        df.at[idx, 'الحالة'] = update_status
-                        
+                        df.at[idx, 'المدفوع'] = new_total
+                        df.at[idx, 'المتبقي'] = total_val - new_total
+                        df.at[idx, 'الحالة'] = update_status_pay
                         conn.update(worksheet="Sheet1", data=df)
-                        st.success(f"تم تسجيل حوالة بقيمة {new_transfer:,.0f} ريال بنجاح!")
+                        st.success("تم تسجيل الحوالة!")
                         st.cache_data.clear()
                         st.rerun()
-    else:
-        st.warning("لا توجد طلبيات لتسجيل دفعات لها.")
 
-# --- 6. تنبيهات الوصول ---
+# --- 6. التنبيهات ---
 st.divider()
 if not df.empty:
     upcoming = df[df['الحالة'].isin(["في البحر", "تخليص جمركي"])].sort_values('تاريخ_الوصول')
     if not upcoming.empty:
         st.subheader("📅 تقويم الوصول")
         for _, row in upcoming.iterrows():
-            st.info(f"🚢 **{row['الطلبية']}** ({row['المورد']}) - متوقع الوصول: {row['تاريخ_الوصول']}")
+            st.info(f"🚢 **{row['الطلبية']}** ({row['المورد']}) - الوصول المتوقع: {row['تاريخ_الوصول']}")
