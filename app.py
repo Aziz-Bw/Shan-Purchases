@@ -4,7 +4,7 @@ from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, date
 
 # --- 1. إعدادات الصفحة ---
-st.set_page_config(page_title="إدارة المشتريات (تعديل كامل)", layout="wide", page_icon="📦")
+st.set_page_config(page_title="نظام إدارة المشتريات", layout="wide", page_icon="📦")
 
 st.markdown("""
 <style>
@@ -23,7 +23,6 @@ st.markdown("""
         padding: 10px; margin-bottom: 10px; border-radius: 5px;
     }
     
-    /* تحسين زر الحفظ */
     div.stButton > button:first-child {
         border-radius: 5px; font-weight: bold;
     }
@@ -36,16 +35,22 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_data():
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
-        if df.empty: return pd.DataFrame()
         
-        required_cols = [
+        # إنشاء الهيكل الأساسي إذا كان الملف فارغاً
+        columns = [
             "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", "القيمة_ريال", 
             "المدفوع", "المتبقي", "الحالة", "تاريخ_الوصول", "ملاحظات",
             "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"
         ]
-        for col in required_cols:
+        
+        if df.empty:
+            return pd.DataFrame(columns=columns)
+            
+        # ضمان وجود الأعمدة
+        for col in columns:
             if col not in df.columns: df[col] = None
         
+        # تحويل الأرقام
         numeric_cols = ["القيمة_دولار", "سعر_الصرف", "القيمة_ريال", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -89,7 +94,10 @@ with st.sidebar:
                 val_sar = val_usd * rate
                 new_id = 1
                 if not df.empty and 'ID' in df.columns and pd.notna(df['ID'].max()):
-                    new_id = int(df['ID'].max()) + 1
+                    try:
+                        new_id = int(df['ID'].max()) + 1
+                    except:
+                        new_id = 1
                 
                 new_row = pd.DataFrame([{
                     "ID": new_id, "الطلبية": order_name, "المورد": supplier,
@@ -124,46 +132,41 @@ c_left, c_right = st.columns([1.5, 1])
 
 with c_left:
     st.subheader("📋 سجل الطلبات (قابل للتعديل)")
-    st.info("💡 يمكنك تعديل البيانات الأساسية هنا مباشرة (مثل الاسم، القيمة، النسب، التواريخ).")
+    st.caption("يمكنك تعديل البيانات هنا مباشرة ثم الضغط على زر الحفظ بالأسفل")
     
-    if not df.empty:
-        # عرض البيانات في محرر
-        edited_df = st.data_editor(
-            df,
-            num_rows="dynamic",
-            use_container_width=True,
-            column_config={
-                "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
-                "الطلبية": st.column_config.TextColumn(width="medium"),
-                "القيمة_دولار": st.column_config.NumberColumn("قيمة ($)", format="%.2f"),
-                "سعر_الصرف": st.column_config.NumberColumn("صرف", format="%.2f"),
-                "القيمة_ريال": st.column_config.NumberColumn("قيمة (ريال)", format="%.0f", disabled=True), # ممنوع التعديل لأنه محسوب
-                "المدفوع": st.column_config.NumberColumn(format="%.0f", disabled=True), # التعديل من النموذج الأيمن
-                "المتبقي": st.column_config.NumberColumn(format="%.0f", disabled=True),
-                "الحالة": st.column_config.SelectboxColumn(options=["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"]),
-                "نسبة_اعتماد": st.column_config.NumberColumn("% اعتماد", width="small"),
-                "نسبة_شحن": st.column_config.NumberColumn("% شحن", width="small"),
-                "نسبة_وصول": st.column_config.NumberColumn("% وصول", width="small"),
-            },
-            key="main_editor"
-        )
+    # عرض الجدول دائماً حتى لو كان فارغاً
+    edited_df = st.data_editor(
+        df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
+            "الطلبية": st.column_config.TextColumn(width="medium"),
+            "القيمة_دولار": st.column_config.NumberColumn("قيمة ($)", format="%.2f"),
+            "سعر_الصرف": st.column_config.NumberColumn("صرف", format="%.2f"),
+            "القيمة_ريال": st.column_config.NumberColumn("قيمة (ريال)", format="%.0f", disabled=True),
+            "المدفوع": st.column_config.NumberColumn(format="%.0f", disabled=True),
+            "المتبقي": st.column_config.NumberColumn(format="%.0f", disabled=True),
+            "الحالة": st.column_config.SelectboxColumn(options=["تجهيز", "في البحر", "تخليص جمركي", "وصلت المستودع"]),
+            "نسبة_اعتماد": st.column_config.NumberColumn("% اعتماد", width="small"),
+            "نسبة_شحن": st.column_config.NumberColumn("% شحن", width="small"),
+            "نسبة_وصول": st.column_config.NumberColumn("% وصول", width="small"),
+        },
+        key="main_editor"
+    )
+    
+    if st.button("💾 حفظ تعديلات الجدول"):
+        # إعادة حساب الأعمدة
+        edited_df['القيمة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
+        edited_df['المتبقي'] = edited_df['القيمة_ريال'] - edited_df['المدفوع']
         
-        # زر حفظ التعديلات اليدوية
-        if st.button("💾 حفظ تعديلات الجدول"):
-            # إعادة حساب الأعمدة المرتبطة (في حال غيرت الدولار أو الصرف)
-            edited_df['القيمة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
-            edited_df['المتبقي'] = edited_df['القيمة_ريال'] - edited_df['المدفوع']
-            
-            conn.update(worksheet="Sheet1", data=edited_df)
-            st.success("تم تحديث البيانات وإعادة الحساب بنجاح!")
-            st.cache_data.clear()
-            st.rerun()
-    else:
-        st.info("لا توجد بيانات. ابدأ بالإضافة من اليمين.")
+        conn.update(worksheet="Sheet1", data=edited_df)
+        st.success("تم التحديث!")
+        st.cache_data.clear()
+        st.rerun()
 
 with c_right:
     st.subheader("💸 تسجيل الحوالات البنكية")
-    st.caption("اختر الطلبية لتسجيل مبلغ تم تحويله فعلياً")
     
     if not df.empty:
         order_options = df['ID'].astype(str) + " - " + df['الطلبية']
@@ -176,7 +179,6 @@ with c_right:
             total_val = current_order['القيمة_ريال']
             paid_val = current_order['المدفوع']
             
-            # تحليل الدفعات
             amount_start = total_val * (current_order['نسبة_اعتماد'] / 100)
             amount_ship = total_val * (current_order['نسبة_شحن'] / 100)
             amount_arrive = total_val * (current_order['نسبة_وصول'] / 100)
@@ -207,9 +209,11 @@ with c_right:
                         df.at[idx, 'المتبقي'] = total_val - new_total
                         df.at[idx, 'الحالة'] = update_status_pay
                         conn.update(worksheet="Sheet1", data=df)
-                        st.success("تم تسجيل الحوالة!")
+                        st.success("تم التسجيل!")
                         st.cache_data.clear()
                         st.rerun()
+    else:
+        st.info("سجل طلبية أولاً لتفعيل الدفعات.")
 
 # --- 6. التنبيهات ---
 st.divider()
