@@ -11,19 +11,37 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
     
+    /* كروت المؤشرات العلوية */
     .metric-card {
-        background-color: #fff; border: 1px solid #e0e0e0; padding: 15px; 
-        border-radius: 10px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        height: 100%; display: flex; flex-direction: column; justify-content: center;
+        background-color: #ffffff; 
+        border: 1px solid #e0e0e0; 
+        padding: 15px; 
+        border-radius: 10px; 
+        text-align: center; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        height: 100%; 
+        display: flex; 
+        flex-direction: column; 
+        justify-content: center;
     }
-    .metric-title { font-size: 13px; color: #666; margin-bottom: 5px; font-weight: bold; }
-    .metric-value { font-size: 20px; font-weight: bold; color: #034275; }
-    .metric-sub { font-size: 11px; color: #27ae60; margin-top: 3px; }
+    .metric-title { font-size: 13px; color: #333333 !important; margin-bottom: 5px; font-weight: bold; }
+    .metric-value { font-size: 20px; font-weight: bold; color: #034275 !important; }
+    .metric-sub { font-size: 11px; color: #27ae60 !important; margin-top: 3px; }
     
+    /* صندوق التحليل (إصلاح اللون الأبيض) */
     .plan-box {
-        background-color: #f8f9fa; border-right: 4px solid #27ae60;
-        padding: 10px; margin-bottom: 10px; border-radius: 5px; font-size: 13px;
+        background-color: #f8f9fa !important; 
+        border-right: 4px solid #27ae60;
+        padding: 15px; 
+        margin-bottom: 15px; 
+        border-radius: 8px; 
+        font-size: 14px;
+        color: #000000 !important; /* إجبار النص على اللون الأسود */
     }
+    
+    /* تنسيق النصوص داخل الصندوق لضمان ظهورها */
+    .plan-box b { color: #000000 !important; }
+    .plan-box small { color: #555555 !important; }
     
     div.stButton > button:first-child { border-radius: 5px; font-weight: bold; }
 </style>
@@ -51,28 +69,26 @@ def load_data():
         
         if df.empty: return pd.DataFrame(columns=columns)
         
-        # التأكد من الأعمدة
         for col in columns:
             if col not in df.columns: df[col] = None
         
-        # تحويل الأرقام
         numeric_cols = ["القيمة_دولار", "سعر_الصرف", "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-        # إصلاح مشكلة المعرف (ID)
+        # إصلاح معرف ID
         df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0).astype(int)
             
         return df
     except:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame()
 
 df = load_data()
 
 # --- 3. الواجهة الرئيسية ---
 st.title("🚢 نظام إدارة المشتريات (اللوحة الكاملة)")
 
-# القائمة الجانبية (إضافة)
+# القائمة الجانبية
 with st.sidebar:
     st.header("📝 تسجيل طلبية جديدة")
     with st.form("add_order_form"):
@@ -107,7 +123,6 @@ with st.sidebar:
                     try: new_id = int(df['ID'].max()) + 1
                     except: new_id = 1
                 
-                # منطق التواريخ الأولي
                 today_str = datetime.now().strftime("%Y-%m-%d")
                 d_conf = today_str if status == "تم الاعتماد" else None
                 d_ship_exp = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d") if status == "تم الاعتماد" else None
@@ -125,15 +140,13 @@ with st.sidebar:
                 conn.update(worksheet="Sheet1", data=updated_df)
                 st.success("تمت الإضافة!"); st.cache_data.clear(); st.rerun()
 
-# --- 4. لوحة الإحصائيات (الشاملة) ---
+# --- 4. لوحة الإحصائيات ---
 if not df.empty:
-    # ماليات
     total_cost_all = df['اجمالي_التكلفة'].sum()
     total_paid = df['المدفوع'].sum()
     total_rem = df['المتبقي'].sum()
     val_in_transit = df[df['الحالة'].isin(["تم الشحن", "تخليص جمركي"])]['اجمالي_التكلفة'].sum()
     
-    # أعداد
     total_orders = len(df)
     cnt_shipped = len(df[df['الحالة'] == "تم الشحن"])
     cnt_customs = len(df[df['الحالة'] == "تخليص جمركي"])
@@ -144,21 +157,19 @@ else:
 
 st.markdown("### 📊 الموقف المالي والتشغيلي")
 
-# الصف الأول: ماليات
 k1, k2, k3, k4 = st.columns(4)
 k1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الالتزام (بضاعة+رسوم)</div><div class="metric-value">{total_cost_all:,.0f}</div></div>', unsafe_allow_html=True)
-k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع فعلياً</div><div class="metric-value" style="color:#27ae60">{total_paid:,.0f}</div></div>', unsafe_allow_html=True)
-k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي للسداد</div><div class="metric-value" style="color:#c0392b">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
-k4.markdown(f'<div class="metric-card"><div class="metric-title">قيمة بضاعة في الطريق</div><div class="metric-value" style="color:#e67e22">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
+k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع فعلياً</div><div class="metric-value" style="color:#27ae60 !important">{total_paid:,.0f}</div></div>', unsafe_allow_html=True)
+k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي للسداد</div><div class="metric-value" style="color:#c0392b !important">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
+k4.markdown(f'<div class="metric-card"><div class="metric-title">قيمة بضاعة في الطريق</div><div class="metric-value" style="color:#e67e22 !important">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# الصف الثاني: تشغيل (أعداد)
 s1, s2, s3, s4 = st.columns(4)
 s1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الطلبات</div><div class="metric-value">{total_orders}</div><div class="metric-sub">نشطة ومكتملة</div></div>', unsafe_allow_html=True)
 s2.markdown(f'<div class="metric-card"><div class="metric-title">شحنات في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div><div class="metric-sub">تم الشحن</div></div>', unsafe_allow_html=True)
 s3.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div><div class="metric-sub">تخليص</div></div>', unsafe_allow_html=True)
-s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60">{cnt_arrived}</div><div class="metric-sub">في المستودع</div></div>', unsafe_allow_html=True)
+s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60 !important">{cnt_arrived}</div><div class="metric-sub">في المستودع</div></div>', unsafe_allow_html=True)
 
 st.divider()
 
@@ -193,25 +204,20 @@ with c_right:
     st.subheader("⚙️ تحديث الحالة والجدولة")
     
     if not df.empty:
-        # إصلاح الخطأ: التأكد من أن ID نصي نظيف قبل العرض
         df['ID_str'] = df['ID'].astype(str)
         order_options = df['ID_str'] + " - " + df['الطلبية']
         selected_option = st.selectbox("تحديد الطلبية:", order_options)
         
         if selected_option:
-            # إصلاح الخطأ: استخراج ID وتحويله لرقم صحيح بأمان
-            try:
-                selected_id = int(float(selected_option.split(" - ")[0]))
-            except:
-                st.error("خطأ في قراءة معرف الطلبية")
-                st.stop()
+            try: selected_id = int(float(selected_option.split(" - ")[0]))
+            except: st.stop()
 
             current_order = df[df['ID'] == selected_id].iloc[0]
-            
             curr_status = current_order['الحالة']
+            
             st.markdown(f"""
             <div class="plan-box">
-            📅 <b>الموقف الزمني:</b><br>
+            📅 <b>الموقف الزمني للطلبية:</b><br>
             • الاعتماد الفعلي: {current_order.get('تاريخ_الاعتماد_الفعلي') or '--'}<br>
             • الشحن المتوقع: <b>{current_order.get('تاريخ_الشحن_المتوقع') or '--'}</b><br>
             • الوصول المتوقع: <b>{current_order.get('تاريخ_الوصول_المتوقع') or '--'}</b>
@@ -228,7 +234,6 @@ with c_right:
                     idx = df.index[df['ID'] == selected_id][0]
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     
-                    # منطق التواريخ
                     if new_status == "تم الاعتماد" and curr_status != "تم الاعتماد":
                         df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today_str
                         df.at[idx, 'تاريخ_الشحن_المتوقع'] = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
@@ -269,5 +274,3 @@ if not df.empty:
                 "اجمالي_التكلفة": st.column_config.NumberColumn("قيمة الشحنة", format="%.0f"),
             }
         )
-    else:
-        st.info("لا توجد شحنات مجدولة للوصول قريباً.")
