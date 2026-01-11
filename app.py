@@ -159,46 +159,53 @@ with st.sidebar:
                 conn.update(worksheet="Sheet1", data=updated_df)
                 st.success("تمت الإضافة!"); st.cache_data.clear(); st.rerun()
 
-# --- 4. الكروت العلوية (المعدلة) ---
+# --- 4. الكروت العلوية (محدثة: التركيز على الالتزام القائم) ---
 if not df_orders.empty:
-    # الحسابات المالية
-    total_cost_all = df_orders['اجمالي_التكلفة'].sum()
-    total_paid = df_orders['المدفوع'].sum()
-    total_rem = df_orders['المتبقي'].sum()
-    val_in_transit = df_orders[df_orders['الحالة'].isin(["تم الشحن", "تخليص جمركي"])]['اجمالي_التكلفة'].sum()
+    # 1. تحديد "الطلبات الجارية" (التي بدأت ولم تنتهِ مالياً)
+    # الشرط: الحالة ليست "لم يبدأ" وليست "مسددة بالكامل"
+    df_active_liability = df_orders[~df_orders['الحالة'].isin(["لم يبدأ", "مسددة بالكامل"])]
     
-    # حسابات العدد (حسب طلبك الجديد)
-    # 1. الطلبات الجارية: كل شيء ما عدا (لم يبدأ) و (مسددة بالكامل)
-    cnt_active = len(df_orders[~df_orders['الحالة'].isin(["لم يبدأ", "مسددة بالكامل"])])
+    # 2. الحسابات المالية (بناءً على الجارية فقط) - تمثل الالتزام الحالي
+    liability_total = df_active_liability['اجمالي_التكلفة'].sum() # قيمة البضاعة التي التزمت بها
+    liability_paid = df_active_liability['المدفوع'].sum()         # ما دفعته لهذه الالتزامات
+    liability_rem = df_active_liability['المتبقي'].sum()          # المتبقي واجب السداد
     
-    # 2. الطلبات المكتملة: فقط المسددة بالكامل
+    # 3. حسابات العدد
+    cnt_active = len(df_active_liability) # عدد الطلبات الجارية
     cnt_completed_final = len(df_orders[df_orders['الحالة'] == "مسددة بالكامل"])
-    
-    # 3. الباقي
     cnt_shipped = len(df_orders[df_orders['الحالة'] == "تم الشحن"])
     cnt_customs = len(df_orders[df_orders['الحالة'] == "تخليص جمركي"])
+    
+    # 4. مستهدف السنة (للعلم فقط - يشمل كل شيء)
+    target_year_total = df_orders['اجمالي_التكلفة'].sum()
 else:
-    total_cost_all = 0; total_paid = 0; total_rem = 0; val_in_transit = 0
+    liability_total = 0; liability_paid = 0; liability_rem = 0; target_year_total = 0
     cnt_active = 0; cnt_completed_final = 0; cnt_shipped = 0; cnt_customs = 0
 
-# السطر الأول: المالي
-k1, k2, k3, k4 = st.columns(4)
-k1.markdown(f'<div class="metric-card"><div class="metric-title">مستهدف مشتريات السنة</div><div class="metric-value">{total_cost_all:,.0f}</div></div>', unsafe_allow_html=True)
-k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع</div><div class="metric-value" style="color:#27ae60 !important">{total_paid:,.0f}</div></div>', unsafe_allow_html=True)
-k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي</div><div class="metric-value" style="color:#c0392b !important">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
-k4.markdown(f'<div class="metric-card"><div class="metric-title">بضاعة بالطريق (مالي)</div><div class="metric-value" style="color:#e67e22 !important">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
+# --- الصف الأول: لوحة القيادة للالتزامات الحالية (الأهم) ---
+# هنا وضعنا عدد الجارية وبجانبه تفاصيلها المالية كما طلبت
+c1, c2, c3, c4 = st.columns(4)
+
+# 1. عدد الطلبات الجارية
+c1.markdown(f'<div class="metric-card"><div class="metric-title">الطلبات المعتمدة/الجارية (العدد)</div><div class="metric-value">{cnt_active}</div></div>', unsafe_allow_html=True)
+
+# 2. قيمة البضاعة الجارية (الالتزام المالي الكامل للطلبات النشطة)
+c2.markdown(f'<div class="metric-card"><div class="metric-title">قيمة البضاعة الجارية (التزام كلي)</div><div class="metric-value" style="color:#e67e22 !important">{liability_total:,.0f}</div></div>', unsafe_allow_html=True)
+
+# 3. المدفوع (للطلبات الجارية فقط)
+c3.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع (للجارية)</div><div class="metric-value" style="color:#27ae60 !important">{liability_paid:,.0f}</div></div>', unsafe_allow_html=True)
+
+# 4. المتبقي (للطلبات الجارية فقط - الدين الحي)
+c4.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي (التزام قائم)</div><div class="metric-value" style="color:#c0392b !important">{liability_rem:,.0f}</div></div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# السطر الثاني: الأعداد (التحديث الجديد)
+# --- الصف الثاني: نظرة عامة وحالة الشحن ---
 s1, s2, s3, s4 = st.columns(4)
-s1.markdown(f'<div class="metric-card"><div class="metric-title">الطلبات المعتمدة/الجارية</div><div class="metric-value">{cnt_active}</div></div>', unsafe_allow_html=True)
-s2.markdown(f'<div class="metric-card"><div class="metric-title">الطلبات المكتملة (مسددة)</div><div class="metric-value" style="color:#27ae60 !important">{cnt_completed_final}</div></div>', unsafe_allow_html=True)
+s1.markdown(f'<div class="metric-card"><div class="metric-title">الطلبات المكتملة (مسددة)</div><div class="metric-value" style="color:#27ae60 !important">{cnt_completed_final}</div></div>', unsafe_allow_html=True)
+s2.markdown(f'<div class="metric-card"><div class="metric-title">مستهدف مشتريات السنة (الكلي)</div><div class="metric-value">{target_year_total:,.0f}</div></div>', unsafe_allow_html=True)
 s3.markdown(f'<div class="metric-card"><div class="metric-title">في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div></div>', unsafe_allow_html=True)
 s4.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div></div>', unsafe_allow_html=True)
-
-st.divider()
-
 # --- 5. الجدول الزمني (المحسن) ---
 st.subheader("🗓️ الجدول الزمني للطلبات")
 if not df_orders.empty:
