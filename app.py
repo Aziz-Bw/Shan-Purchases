@@ -71,7 +71,7 @@ def load_data():
 df = load_data()
 
 # --- 3. الواجهة الرئيسية ---
-st.title("🚢 نظام إدارة المشتريات (خريطة سنوية)")
+st.title("🚢 نظام إدارة المشتريات (الخطة القياسية 60 يوم)")
 
 with st.sidebar:
     st.header("📝 تسجيل طلبية جديدة")
@@ -94,7 +94,14 @@ with st.sidebar:
         pct_arrive = p3.number_input("وصول %", value=50)
         
         st.markdown("---")
-        status = st.selectbox("الحالة الأولية", STATUS_LIST)
+        # التواريخ المتوقعة (قاعدة 60 يوم)
+        target_arrival = st.date_input("تاريخ الوصول المستهدف")
+        # حساب تاريخ البداية المفترض (الوصول - 60 يوم)
+        implied_start = target_arrival - timedelta(days=60)
+        
+        st.caption(f"🗓️ بناءً على الوصول في {target_arrival}، يجب بدء الطلب في: **{implied_start}**")
+        
+        status = st.selectbox("الحالة الأولية", ["لم يبدأ", "تم الاعتماد"])
         notes = st.text_area("ملاحظات")
         
         submitted = st.form_submit_button("💾 حفظ الطلبية")
@@ -105,9 +112,18 @@ with st.sidebar:
                     try: new_id = int(df['ID'].max()) + 1
                     except: new_id = 1
                 
+                # منطق التواريخ عند الإنشاء
                 today = datetime.now()
+                # إذا اخترت "لم يبدأ": نحفظ تاريخ الوصول المستهدف فقط
+                d_arrive_exp = str(target_arrival)
+                
+                # إذا اخترت "تم الاعتماد": نبدأ الدورة الفعلية اليوم
                 d_conf = today if status == "تم الاعتماد" else None
+                # الشحن المتوقع = اليوم + 30
                 d_ship_exp = (today + timedelta(days=30)) if status == "تم الاعتماد" else None
+                # الوصول المتوقع = اليوم + 60
+                if status == "تم الاعتماد":
+                    d_arrive_exp = (today + timedelta(days=60)).strftime("%Y-%m-%d")
                 
                 new_row = pd.DataFrame([{
                     "ID": new_id, "الطلبية": order_name, "المورد": supplier,
@@ -116,7 +132,7 @@ with st.sidebar:
                     "المدفوع": 0.0, "المتبقي": total_sar, "الحالة": status, "ملاحظات": notes,
                     "نسبة_اعتماد": pct_start, "نسبة_شحن": pct_ship, "نسبة_وصول": pct_arrive,
                     "تاريخ_الاعتماد_الفعلي": d_conf, "تاريخ_الشحن_المتوقع": d_ship_exp,
-                    "تاريخ_الشحن_الفعلي": None, "تاريخ_الوصول_المتوقع": None, "تاريخ_الوصول_الفعلي": None
+                    "تاريخ_الشحن_الفعلي": None, "تاريخ_الوصول_المتوقع": d_arrive_exp, "تاريخ_الوصول_الفعلي": None
                 }])
                 updated_df = pd.concat([df, new_row], ignore_index=True)
                 conn.update(worksheet="Sheet1", data=updated_df)
@@ -152,82 +168,93 @@ s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / ان
 
 st.divider()
 
-# --- 5. الجدول الزمني (Yearly Timeline) ---
-st.subheader("🗓️ الجدول الزمني السنوي (Yearly Roadmap)")
+# --- 5. الجدول الزمني (Yearly Roadmap) ---
+st.subheader("🗓️ الجدول الزمني للطلبات (خريطة سنوية)")
 
 if not df.empty:
     timeline_data = []
     today = datetime.now()
     
-    # 1. إضافة بيانات وهمية لضبط مقياس الرسم (سنة كاملة)
-    # هذا يضمن أن الجدول يظهر دائماً 12 شهر حتى لو مافي بيانات
+    # صف مقياس وهمي لضبط السنة
     timeline_data.append(dict(Task="-- Scale --", Start=today, Finish=today + timedelta(days=365), Stage="Scale", Color="rgba(0,0,0,0)"))
 
     for _, row in df.iterrows():
-        start_date = row['تاريخ_الاعتماد_الفعلي']
-        if pd.isna(start_date): start_date = today 
+        # --- منطق الرسم البياني (Gantt Logic) ---
         
-        # منطق الحالات
-        if row['الحالة'] in ["وصلت للمستودع", "مسددة بالكامل"]:
-            end_date = row['تاريخ_الوصول_الفعلي']
-            if pd.isna(end_date): end_date = today
-            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مكتملة", Color="#27ae60"))
+        # الحالة 1: لم تبدأ (خطة مستقبلية عكسية)
+        # تاريخ النهاية = تاريخ الوصول المتوقع المسجل
+        # تاريخ البداية = النهاية - 60 يوم
+        if row['الحالة'] == "لم يبدأ":
+            arrive_exp = row['تاريخ_الوصول_المتوقع']
+            if pd.isna(arrive_exp): arrive_exp = today + timedelta(days=60) # افتراضي اذا لم يحدد
             
-        elif row['الحالة'] == "لم يبدأ":
-            end_date = start_date + timedelta(days=60)
-            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مجدولة", Color="#bdc3c7"))
+            start_plan = arrive_exp - timedelta(days=60)
             
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_plan, Finish=arrive_exp, Stage="مخطط (60 يوم)", Color="#95a5a6")) # رمادي
+            
+        # الحالة 2: منتهية (أخضر كامل)
+        elif row['الحالة'] in ["وصلت للمستودع", "مسددة بالكامل"]:
+            start_actual = row['تاريخ_الاعتماد_الفعلي']
+            end_actual = row['تاريخ_الوصول_الفعلي']
+            if pd.isna(start_actual): start_actual = today
+            if pd.isna(end_actual): end_actual = today
+            
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_actual, Finish=end_actual, Stage="مكتملة", Color="#27ae60")) # أخضر
+            
+        # الحالة 3: قيد التنفيذ (تقسيم المراحل)
         else:
-            # مرحلة التجهيز
-            ship_date = row['تاريخ_الشحن_الفعلي']
-            ship_exp = row['تاريخ_الشحن_المتوقع']
-            phase1_end = ship_date if pd.notna(ship_date) else (ship_exp if pd.notna(ship_exp) else start_date + timedelta(days=30))
+            # 1. مرحلة التجهيز (أزرق)
+            # تبدأ من: تاريخ الاعتماد الفعلي
+            # تنتهي عند: الشحن الفعلي (إذا شحنت) أو الشحن المتوقع
+            start_conf = row['تاريخ_الاعتماد_الفعلي']
+            if pd.isna(start_conf): start_conf = today
             
-            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=phase1_end, Stage="تجهيز", Color="#3498db"))
+            date_ship = row['تاريخ_الشحن_الفعلي']
+            date_ship_exp = row['تاريخ_الشحن_المتوقع']
             
-            # مرحلة الشحن
-            if row['الحالة'] in ["تم الشحن", "تخليص جمركي"]:
-                arrive_exp = row['تاريخ_الوصول_المتوقع']
-                phase2_end = arrive_exp if pd.notna(arrive_exp) else phase1_end + timedelta(days=30)
-                color_phase2 = "#e67e22" if row['الحالة'] == "تم الشحن" else "#e74c3c" # برتقالي للشحن، أحمر للجمارك
-                stage_name = "شحن" if row['الحالة'] == "تم الشحن" else "جمارك"
+            phase1_end = date_ship if pd.notna(date_ship) else (date_ship_exp if pd.notna(date_ship_exp) else start_conf + timedelta(days=30))
+            
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_conf, Finish=phase1_end, Stage="تجهيز (30 يوم)", Color="#3498db")) # أزرق
+            
+            # 2. مرحلة الشحن/الطريق (برتقالي)
+            # تظهر فقط إذا تجاوزنا مرحلة التجهيز (أي لدينا تاريخ شحن متوقع أو فعلي)
+            # تبدأ من: نهاية المرحلة 1
+            # تنتهي عند: الوصول المتوقع (وهو الشحن الفعلي + 30 يوم)
+            
+            arrive_exp = row['تاريخ_الوصول_المتوقع']
+            
+            # نعيد حساب الوصول المتوقع ديناميكياً للعرض فقط
+            if pd.notna(date_ship): # إذا انشحنت فعلياً
+                calc_arrival = date_ship + timedelta(days=30)
+            elif pd.notna(date_ship_exp): # لم تشحن بعد، نعتمد على المتوقع
+                calc_arrival = date_ship_exp + timedelta(days=30)
+            else:
+                calc_arrival = phase1_end + timedelta(days=30)
                 
-                timeline_data.append(dict(Task=row['الطلبية'], Start=phase1_end, Finish=phase2_end, Stage=stage_name, Color=color_phase2))
+            phase2_end = arrive_exp if pd.notna(arrive_exp) else calc_arrival
+            
+            color_phase2 = "#e67e22" if row['الحالة'] == "تم الشحن" else "#e74c3c" # أحمر للجمارك
+            stage_label = "شحن (30 يوم)" if row['الحالة'] != "تخليص جمركي" else "جمارك"
+            
+            timeline_data.append(dict(Task=row['الطلبية'], Start=phase1_end, Finish=phase2_end, Stage=stage_label, Color=color_phase2))
 
     if len(timeline_data) > 0:
         df_gantt = pd.DataFrame(timeline_data)
-        
-        # استبعاد الصف الوهمي من العرض في المحور الصادي
-        df_gantt_clean = df_gantt[df_gantt['Task'] != "-- Scale --"]
+        df_clean = df_gantt[df_gantt['Task'] != "-- Scale --"]
         
         fig = px.timeline(
-            df_gantt_clean, 
-            x_start="Start", 
-            x_end="Finish", 
-            y="Task", 
-            color="Color",
-            title="",
-            color_discrete_map="identity",
-            height=350 + (len(df)*30),
-            template="plotly_white" # تصميم فاتح ونظيف
+            df_clean, x_start="Start", x_end="Finish", y="Task", color="Color",
+            title="", color_discrete_map="identity",
+            height=350 + (len(df)*30), template="plotly_white"
         )
         
-        # --- التخصيص الحاسم للتواريخ (12 شهر) ---
         fig.update_xaxes(
-            tickformat="%b %Y", # التنسيق: Jan 2026
-            dtick="M1",         # الفاصل: كل شهر
-            ticklabelmode="period",
-            range=[today, today + timedelta(days=365)], # إجبار العرض من اليوم لسنة قدام
-            side="top" # التواريخ فوق
+            tickformat="%b %Y", dtick="M1", ticklabelmode="period",
+            range=[today - timedelta(days=30), today + timedelta(days=300)], # عرض من الشهر الماضي وللأمام
+            side="top"
         )
-        
         fig.update_yaxes(autorange="reversed", title="")
-        fig.update_layout(
-            showlegend=False, 
-            margin=dict(l=10, r=10, t=30, b=10),
-            xaxis_gridcolor='#f0f0f0'
-        )
-        
+        fig.update_layout(showlegend=False, margin=dict(l=10, r=10, t=30, b=10), xaxis_gridcolor='#f0f0f0')
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("سجل تواريخ للطلبات لتظهر في الجدول الزمني.")
@@ -243,13 +270,11 @@ with c_left:
         "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
         "الطلبية": st.column_config.TextColumn(width="medium"),
         "القيمة_دولار": st.column_config.NumberColumn("$", format="%.2f"),
-        "تاريخ_الشحن_المتوقع": st.column_config.DateColumn("ت. شحن", format="DD/MM/YYYY", disabled=True),
-        "تاريخ_الوصول_المتوقع": st.column_config.DateColumn("ت. وصول", format="DD/MM/YYYY", disabled=True),
+        "تاريخ_الوصول_المتوقع": st.column_config.DateColumn("ت. وصول (هدف)", format="DD/MM/YYYY", disabled=True),
         "الحالة": st.column_config.SelectboxColumn(options=STATUS_LIST),
         "المتبقي": st.column_config.NumberColumn(format="%.0f", disabled=True),
     }
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, column_config=col_config, key="main_editor")
-    
     if st.button("💾 حفظ التعديلات"):
         edited_df['قيمة_البضاعة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
         edited_df['رسوم_شحن_تخليص'] = edited_df['القيمة_دولار'] * FEES_FACTOR
@@ -260,7 +285,7 @@ with c_left:
         st.cache_data.clear(); st.rerun()
 
 with c_right:
-    st.subheader("⚙️ تحديث الحالة")
+    st.subheader("⚙️ تحديث الحالة والتواريخ")
     if not df.empty:
         df['ID_str'] = df['ID'].astype(str)
         order_options = df['ID_str'] + " - " + df['الطلبية']
@@ -273,8 +298,10 @@ with c_right:
             current_order = df[df['ID'] == selected_id].iloc[0]
             st.markdown(f"""
             <div class="plan-box">
-            <b>{current_order['الطلبية']}</b><br>
-            الحالة: <b>{current_order['الحالة']}</b> | المتبقي: <b>{current_order['المتبقي']:,.0f}</b>
+            <b>{current_order['الطلبية']}</b> | الحالة: {current_order['الحالة']}<br>
+            📅 الاعتماد الفعلي: {current_order.get('تاريخ_الاعتماد_الفعلي') or 'غير محدد'}<br>
+            🚢 الشحن الفعلي: {current_order.get('تاريخ_الشحن_الفعلي') or 'غير محدد'}<br>
+            🎯 الوصول المتوقع: <b>{current_order.get('تاريخ_الوصول_المتوقع') or '--'}</b>
             </div>
             """, unsafe_allow_html=True)
             
@@ -284,25 +311,34 @@ with c_right:
                 except: idx_status = 0
                 new_status = st.selectbox("تحديث الحالة", STATUS_LIST, index=idx_status)
                 
-                if st.form_submit_button("حفظ"):
+                if st.form_submit_button("حفظ التحديث"):
                     idx = df.index[df['ID'] == selected_id][0]
-                    today_now = datetime.now()
+                    today = datetime.now()
+                    today_str = today.strftime("%Y-%m-%d")
                     
+                    # --- منطق التحديث الذكي (60 يوم) ---
+                    
+                    # 1. عند الاعتماد: نثبت تاريخ البداية + نحسب الشحن المتوقع
                     if new_status == "تم الاعتماد" and current_order['الحالة'] != "تم الاعتماد":
-                        df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today_now
-                        df.at[idx, 'تاريخ_الشحن_المتوقع'] = today_now + timedelta(days=30)
+                        df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today_str
+                        df.at[idx, 'تاريخ_الشحن_المتوقع'] = (today + timedelta(days=30)).strftime("%Y-%m-%d")
+                        # الوصول المتوقع يصبح (الاعتماد + 60)
+                        df.at[idx, 'تاريخ_الوصول_المتوقع'] = (today + timedelta(days=60)).strftime("%Y-%m-%d")
                     
+                    # 2. عند الشحن: نثبت تاريخ الشحن الفعلي + نعيد حساب الوصول المتوقع
                     if new_status == "تم الشحن" and current_order['الحالة'] != "تم الشحن":
-                        df.at[idx, 'تاريخ_الشحن_الفعلي'] = today_now
-                        df.at[idx, 'تاريخ_الوصول_المتوقع'] = today_now + timedelta(days=30)
+                        df.at[idx, 'تاريخ_الشحن_الفعلي'] = today_str
+                        # الوصول المتوقع الجديد = الشحن الفعلي + 30 يوم
+                        df.at[idx, 'تاريخ_الوصول_المتوقع'] = (today + timedelta(days=30)).strftime("%Y-%m-%d")
                         
+                    # 3. عند الوصول: نثبت تاريخ الوصول الفعلي
                     if new_status in ["وصلت للمستودع", "مسددة بالكامل"] and current_order['الحالة'] not in ["وصلت للمستودع", "مسددة بالكامل"]:
-                        df.at[idx, 'تاريخ_الوصول_الفعلي'] = today_now
+                        df.at[idx, 'تاريخ_الوصول_الفعلي'] = today_str
 
                     df.at[idx, 'المدفوع'] = current_order['المدفوع'] + new_transfer
                     df.at[idx, 'المتبقي'] = current_order['اجمالي_التكلفة'] - (current_order['المدفوع'] + new_transfer)
                     df.at[idx, 'الحالة'] = new_status
                     
                     conn.update(worksheet="Sheet1", data=df)
-                    st.success("تم!")
+                    st.success("تم التحديث وإعادة جدولة التواريخ!")
                     st.cache_data.clear(); st.rerun()
