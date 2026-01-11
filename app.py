@@ -20,7 +20,6 @@ st.markdown("""
     .metric-title { font-size: 13px; color: #333333 !important; margin-bottom: 5px; font-weight: bold; }
     .metric-value { font-size: 20px; font-weight: bold; color: #034275 !important; }
     
-    /* تنسيق النصوص داخل الصناديق */
     .plan-box {
         background-color: #f8f9fa !important; border-right: 4px solid #27ae60;
         padding: 15px; margin-bottom: 15px; border-radius: 8px; font-size: 14px;
@@ -60,7 +59,7 @@ def load_data():
         
         df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0).astype(int)
         
-        # تحويل التواريخ إلى datetime لضمان عمل المخطط
+        # تحويل التواريخ
         date_cols = ["تاريخ_الاعتماد_الفعلي", "تاريخ_الشحن_المتوقع", "تاريخ_الشحن_الفعلي", "تاريخ_الوصول_المتوقع", "تاريخ_الوصول_الفعلي"]
         for col in date_cols:
             df[col] = pd.to_datetime(df[col], errors='coerce')
@@ -72,7 +71,7 @@ def load_data():
 df = load_data()
 
 # --- 3. الواجهة الرئيسية ---
-st.title("🚢 نظام إدارة المشتريات (اللوحة الكاملة)")
+st.title("🚢 نظام إدارة المشتريات (خريطة سنوية)")
 
 with st.sidebar:
     st.header("📝 تسجيل طلبية جديدة")
@@ -153,68 +152,81 @@ s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / ان
 
 st.divider()
 
-# --- 5. الجدول الزمني (Timeline Chart) ---
-st.subheader("🗓️ الجدول الزمني للطلبات (Timeline)")
+# --- 5. الجدول الزمني (Yearly Timeline) ---
+st.subheader("🗓️ الجدول الزمني السنوي (Yearly Roadmap)")
 
 if not df.empty:
     timeline_data = []
+    today = datetime.now()
     
+    # 1. إضافة بيانات وهمية لضبط مقياس الرسم (سنة كاملة)
+    # هذا يضمن أن الجدول يظهر دائماً 12 شهر حتى لو مافي بيانات
+    timeline_data.append(dict(Task="-- Scale --", Start=today, Finish=today + timedelta(days=365), Stage="Scale", Color="rgba(0,0,0,0)"))
+
     for _, row in df.iterrows():
-        # تحديد التواريخ والمراحل
         start_date = row['تاريخ_الاعتماد_الفعلي']
-        if pd.isna(start_date): start_date = datetime.now() # افتراضي للي ما بدأ
+        if pd.isna(start_date): start_date = today 
         
-        # 1. حالة الوصول النهائي (أخضر كامل)
+        # منطق الحالات
         if row['الحالة'] in ["وصلت للمستودع", "مسددة بالكامل"]:
             end_date = row['تاريخ_الوصول_الفعلي']
-            if pd.isna(end_date): end_date = datetime.now()
-            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مكتملة", Color="#27ae60")) # أخضر
+            if pd.isna(end_date): end_date = today
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مكتملة", Color="#27ae60"))
             
-        # 2. حالة لم تبدأ بعد (رمادي - توقع)
         elif row['الحالة'] == "لم يبدأ":
-            end_date = start_date + timedelta(days=60) # افتراضي
-            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مجدولة", Color="#95a5a6")) # رمادي
+            end_date = start_date + timedelta(days=60)
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مجدولة", Color="#bdc3c7"))
             
-        # 3. حالات قيد التنفيذ (تقسيم المراحل)
         else:
-            # مرحلة التجهيز (من الاعتماد للشحن)
+            # مرحلة التجهيز
             ship_date = row['تاريخ_الشحن_الفعلي']
             ship_exp = row['تاريخ_الشحن_المتوقع']
-            
-            # إذا لم تشحن بعد، نستخدم المتوقع
             phase1_end = ship_date if pd.notna(ship_date) else (ship_exp if pd.notna(ship_exp) else start_date + timedelta(days=30))
             
-            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=phase1_end, Stage="تجهيز/تصنيع", Color="#3498db")) # أزرق
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=phase1_end, Stage="تجهيز", Color="#3498db"))
             
-            # إذا شحنت، نضيف مرحلة الشحن (من الشحن للوصول المتوقع)
+            # مرحلة الشحن
             if row['الحالة'] in ["تم الشحن", "تخليص جمركي"]:
                 arrive_exp = row['تاريخ_الوصول_المتوقع']
                 phase2_end = arrive_exp if pd.notna(arrive_exp) else phase1_end + timedelta(days=30)
-                
-                # لون الشحن برتقالي، التخليص أحمر فاتح
-                color_phase2 = "#e67e22" if row['الحالة'] == "تم الشحن" else "#e74c3c"
-                stage_name = "شحن دولي" if row['الحالة'] == "تم الشحن" else "تخليص جمركي"
+                color_phase2 = "#e67e22" if row['الحالة'] == "تم الشحن" else "#e74c3c" # برتقالي للشحن، أحمر للجمارك
+                stage_name = "شحن" if row['الحالة'] == "تم الشحن" else "جمارك"
                 
                 timeline_data.append(dict(Task=row['الطلبية'], Start=phase1_end, Finish=phase2_end, Stage=stage_name, Color=color_phase2))
 
-    if timeline_data:
+    if len(timeline_data) > 0:
         df_gantt = pd.DataFrame(timeline_data)
         
-        # رسم المخطط
+        # استبعاد الصف الوهمي من العرض في المحور الصادي
+        df_gantt_clean = df_gantt[df_gantt['Task'] != "-- Scale --"]
+        
         fig = px.timeline(
-            df_gantt, 
+            df_gantt_clean, 
             x_start="Start", 
             x_end="Finish", 
             y="Task", 
             color="Color",
-            title="تتبع حالة الشحنات زمنياً",
-            color_discrete_map="identity", # استخدام الألوان المحددة في الداتا
-            height=300 + (len(df)*30) # ارتفاع ديناميكي
+            title="",
+            color_discrete_map="identity",
+            height=350 + (len(df)*30),
+            template="plotly_white" # تصميم فاتح ونظيف
         )
         
-        fig.update_yaxes(autorange="reversed", title="") # ترتيب من الأقدم للأحدث
-        fig.update_xaxes(title="التاريخ")
-        fig.update_layout(showlegend=False, xaxis_gridcolor='#eee')
+        # --- التخصيص الحاسم للتواريخ (12 شهر) ---
+        fig.update_xaxes(
+            tickformat="%b %Y", # التنسيق: Jan 2026
+            dtick="M1",         # الفاصل: كل شهر
+            ticklabelmode="period",
+            range=[today, today + timedelta(days=365)], # إجبار العرض من اليوم لسنة قدام
+            side="top" # التواريخ فوق
+        )
+        
+        fig.update_yaxes(autorange="reversed", title="")
+        fig.update_layout(
+            showlegend=False, 
+            margin=dict(l=10, r=10, t=30, b=10),
+            xaxis_gridcolor='#f0f0f0'
+        )
         
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -222,11 +234,11 @@ if not df.empty:
 
 st.divider()
 
-# --- 6. منطقة العمل (جدول + تحديث) ---
+# --- 6. منطقة العمل ---
 c_left, c_right = st.columns([1.8, 1])
 
 with c_left:
-    st.subheader("📋 البيانات التفصيلية")
+    st.subheader("📋 سجل البيانات التفصيلي")
     col_config = {
         "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
         "الطلبية": st.column_config.TextColumn(width="medium"),
@@ -236,7 +248,6 @@ with c_left:
         "الحالة": st.column_config.SelectboxColumn(options=STATUS_LIST),
         "المتبقي": st.column_config.NumberColumn(format="%.0f", disabled=True),
     }
-    
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, column_config=col_config, key="main_editor")
     
     if st.button("💾 حفظ التعديلات"):
@@ -260,35 +271,33 @@ with c_right:
             except: st.stop()
 
             current_order = df[df['ID'] == selected_id].iloc[0]
-            
             st.markdown(f"""
             <div class="plan-box">
             <b>{current_order['الطلبية']}</b><br>
-            الحالة الحالية: <b>{current_order['الحالة']}</b><br>
-            المتبقي: {current_order['المتبقي']:,.0f} ريال
+            الحالة: <b>{current_order['الحالة']}</b> | المتبقي: <b>{current_order['المتبقي']:,.0f}</b>
             </div>
             """, unsafe_allow_html=True)
             
             with st.form("update_form"):
-                new_transfer = st.number_input("تسجيل دفعة (ريال)", min_value=0.0, step=1000.0)
+                new_transfer = st.number_input("دفع مبلغ (ريال)", min_value=0.0, step=1000.0)
                 try: idx_status = STATUS_LIST.index(current_order['الحالة'])
                 except: idx_status = 0
                 new_status = st.selectbox("تحديث الحالة", STATUS_LIST, index=idx_status)
                 
                 if st.form_submit_button("حفظ"):
                     idx = df.index[df['ID'] == selected_id][0]
-                    today = datetime.now()
+                    today_now = datetime.now()
                     
                     if new_status == "تم الاعتماد" and current_order['الحالة'] != "تم الاعتماد":
-                        df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today
-                        df.at[idx, 'تاريخ_الشحن_المتوقع'] = today + timedelta(days=30)
+                        df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today_now
+                        df.at[idx, 'تاريخ_الشحن_المتوقع'] = today_now + timedelta(days=30)
                     
                     if new_status == "تم الشحن" and current_order['الحالة'] != "تم الشحن":
-                        df.at[idx, 'تاريخ_الشحن_الفعلي'] = today
-                        df.at[idx, 'تاريخ_الوصول_المتوقع'] = today + timedelta(days=30)
+                        df.at[idx, 'تاريخ_الشحن_الفعلي'] = today_now
+                        df.at[idx, 'تاريخ_الوصول_المتوقع'] = today_now + timedelta(days=30)
                         
                     if new_status in ["وصلت للمستودع", "مسددة بالكامل"] and current_order['الحالة'] not in ["وصلت للمستودع", "مسددة بالكامل"]:
-                        df.at[idx, 'تاريخ_الوصول_الفعلي'] = today
+                        df.at[idx, 'تاريخ_الوصول_الفعلي'] = today_now
 
                     df.at[idx, 'المدفوع'] = current_order['المدفوع'] + new_transfer
                     df.at[idx, 'المتبقي'] = current_order['اجمالي_التكلفة'] - (current_order['المدفوع'] + new_transfer)
