@@ -51,6 +51,10 @@ def load_data():
         except:
             df_payments = pd.DataFrame() # إذا لم توجد الصفحة
 
+        # --- إصلاح مشكلة الهمزة تلقائياً ---
+        # نوحد التسمية لتكون "اجمالي" (بدون همزة) لتتطابق مع الكود
+        df_orders.rename(columns=lambda x: x.replace('إجمالي', 'اجمالي'), inplace=True)
+
         # --- تجهيز جدول الطلبات ---
         ord_cols = [
             "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", 
@@ -60,9 +64,14 @@ def load_data():
             "تاريخ_الاعتماد_الفعلي", "تاريخ_الشحن_المتوقع", 
             "تاريخ_الشحن_الفعلي", "تاريخ_الوصول_المتوقع", "تاريخ_الوصول_الفعلي"
         ]
-        if df_orders.empty: df_orders = pd.DataFrame(columns=ord_cols)
-        for col in ord_cols:
-            if col not in df_orders.columns: df_orders[col] = None
+        
+        # إنشاء الأعمدة الناقصة
+        if df_orders.empty: 
+            df_orders = pd.DataFrame(columns=ord_cols)
+        else:
+            for col in ord_cols:
+                if col not in df_orders.columns: 
+                    df_orders[col] = None
             
         # --- تجهيز جدول الدفعات ---
         pay_cols = ["PaymentID", "OrderID", "التاريخ", "المبلغ", "البيان", "رابط_السند"]
@@ -72,7 +81,10 @@ def load_data():
 
         # تحويل الأرقام (Orders)
         num_cols = ["القيمة_دولار", "سعر_الصرف", "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
-        for col in num_cols: df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0)
+        for col in num_cols: 
+            if col in df_orders.columns:
+                df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0)
+        
         df_orders['ID'] = pd.to_numeric(df_orders['ID'], errors='coerce').fillna(0).astype(int)
         
         # تحويل الأرقام (Payments)
@@ -82,20 +94,23 @@ def load_data():
 
         # تحويل التواريخ
         date_cols = ["تاريخ_الاعتماد_الفعلي", "تاريخ_الشحن_المتوقع", "تاريخ_الشحن_الفعلي", "تاريخ_الوصول_المتوقع", "تاريخ_الوصول_الفعلي"]
-        for col in date_cols: df_orders[col] = pd.to_datetime(df_orders[col], errors='coerce')
+        for col in date_cols: 
+            if col in df_orders.columns:
+                df_orders[col] = pd.to_datetime(df_orders[col], errors='coerce')
         
         # *** المزامنة الذكية ***
         # نعيد حساب "المدفوع" في جدول الطلبات بناءً على مجموع الدفعات في جدول الدفعات
-        # لضمان عدم وجود أخطاء في الأرصدة
         if not df_payments.empty:
             real_paid = df_payments.groupby('OrderID')['المبلغ'].sum().reset_index()
             for index, row in df_orders.iterrows():
                 oid = row['ID']
                 paid_amt = real_paid[real_paid['OrderID'] == oid]['المبلغ'].sum()
                 df_orders.at[index, 'المدفوع'] = paid_amt
-                df_orders.at[index, 'المتبقي'] = row['اجمالي_التكلفة'] - paid_amt # سيتم تصحيحه في الاسفل
+                # هنا قمنا بتصحيح الخطأ الإملائي (aجمالي -> اجمالي)
+                if 'اجمالي_التكلفة' in row:
+                    df_orders.at[index, 'المتبقي'] = row['اجمالي_التكلفة'] - paid_amt 
 
-        # إعادة حساب المتبقي للجميع
+        # إعادة حساب المتبقي للجميع (للتأكد)
         df_orders['المتبقي'] = df_orders['اجمالي_التكلفة'] - df_orders['المدفوع']
 
         return df_orders, df_payments
@@ -228,15 +243,16 @@ if not df_orders.empty:
     if len(timeline_data) > 0:
         df_gantt = pd.DataFrame(timeline_data)
         df_clean = df_gantt[df_gantt['Task'] != "-- Scale --"]
-        fig = px.timeline(
-            df_clean, x_start="Start", x_end="Finish", y="Task", color="Color",
-            title="", color_discrete_map="identity",
-            height=350 + (len(df_orders)*30), template="plotly_white"
-        )
-        fig.update_xaxes(tickformat="%b %Y", dtick="M1", ticklabelmode="period", range=[today - timedelta(days=30), today + timedelta(days=300)], side="top")
-        fig.update_yaxes(autorange="reversed", title="")
-        fig.update_layout(showlegend=False, margin=dict(l=10, r=10, t=30, b=10), xaxis_gridcolor='#f0f0f0')
-        st.plotly_chart(fig, use_container_width=True)
+        if not df_clean.empty:
+            fig = px.timeline(
+                df_clean, x_start="Start", x_end="Finish", y="Task", color="Color",
+                title="", color_discrete_map="identity",
+                height=350 + (len(df_orders)*30), template="plotly_white"
+            )
+            fig.update_xaxes(tickformat="%b %Y", dtick="M1", ticklabelmode="period", range=[today - timedelta(days=30), today + timedelta(days=300)], side="top")
+            fig.update_yaxes(autorange="reversed", title="")
+            fig.update_layout(showlegend=False, margin=dict(l=10, r=10, t=30, b=10), xaxis_gridcolor='#f0f0f0')
+            st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
 
@@ -337,7 +353,6 @@ with c_right:
                     idx = df_orders.index[df_orders['ID'] == selected_id][0]
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     
-                    # منطق التواريخ (نفس السابق)
                     if new_status == "تم الاعتماد" and current_order['الحالة'] != "تم الاعتماد":
                         df_orders.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today_str
                         df_orders.at[idx, 'تاريخ_الشحن_المتوقع'] = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
@@ -350,7 +365,6 @@ with c_right:
                     if new_status in ["وصلت للمستودع", "مسددة بالكامل"] and current_order['الحالة'] not in ["وصلت للمستودع", "مسددة بالكامل"]:
                         df_orders.at[idx, 'تاريخ_الوصول_الفعلي'] = today_str
 
-                    # لا نحدث المدفوع هنا يدوياً، لأن load_data سيجمعه تلقائياً في التحديث القادم
                     df_orders.at[idx, 'الحالة'] = new_status
                     
                     conn.update(worksheet="Sheet1", data=df_orders)
