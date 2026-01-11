@@ -206,7 +206,9 @@ s1.markdown(f'<div class="metric-card"><div class="metric-title">الطلبات 
 s2.markdown(f'<div class="metric-card"><div class="metric-title">مستهدف مشتريات السنة (الكلي)</div><div class="metric-value">{target_year_total:,.0f}</div></div>', unsafe_allow_html=True)
 s3.markdown(f'<div class="metric-card"><div class="metric-title">في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div></div>', unsafe_allow_html=True)
 s4.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div></div>', unsafe_allow_html=True)
+
 # --- 5. الجدول الزمني (المحسن) ---
+
 st.subheader("🗓️ الجدول الزمني للطلبات")
 if not df_orders.empty:
     timeline_data = []
