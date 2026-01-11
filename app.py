@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, timedelta, date
 
@@ -11,37 +12,21 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
     
-    /* كروت المؤشرات العلوية */
     .metric-card {
-        background-color: #ffffff; 
-        border: 1px solid #e0e0e0; 
-        padding: 15px; 
-        border-radius: 10px; 
-        text-align: center; 
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        height: 100%; 
-        display: flex; 
-        flex-direction: column; 
-        justify-content: center;
+        background-color: #fff; border: 1px solid #e0e0e0; padding: 15px; 
+        border-radius: 10px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        height: 100%; display: flex; flex-direction: column; justify-content: center;
     }
     .metric-title { font-size: 13px; color: #333333 !important; margin-bottom: 5px; font-weight: bold; }
     .metric-value { font-size: 20px; font-weight: bold; color: #034275 !important; }
-    .metric-sub { font-size: 11px; color: #27ae60 !important; margin-top: 3px; }
     
-    /* صندوق التحليل (إصلاح اللون الأبيض) */
+    /* تنسيق النصوص داخل الصناديق */
     .plan-box {
-        background-color: #f8f9fa !important; 
-        border-right: 4px solid #27ae60;
-        padding: 15px; 
-        margin-bottom: 15px; 
-        border-radius: 8px; 
-        font-size: 14px;
-        color: #000000 !important; /* إجبار النص على اللون الأسود */
+        background-color: #f8f9fa !important; border-right: 4px solid #27ae60;
+        padding: 15px; margin-bottom: 15px; border-radius: 8px; font-size: 14px;
+        color: #000000 !important;
     }
-    
-    /* تنسيق النصوص داخل الصندوق لضمان ظهورها */
     .plan-box b { color: #000000 !important; }
-    .plan-box small { color: #555555 !important; }
     
     div.stButton > button:first-child { border-radius: 5px; font-weight: bold; }
 </style>
@@ -51,13 +36,12 @@ st.markdown("""
 STATUS_LIST = ["لم يبدأ", "تم الاعتماد", "جاري التجهيز", "تم الشحن", "تخليص جمركي", "وصلت للمستودع", "مسددة بالكامل"]
 FEES_FACTOR = 0.744
 
-# --- 2. الاتصال بجوجل شيت ---
+# --- 2. الاتصال والبيانات ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
-        
         columns = [
             "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", 
             "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", 
@@ -66,18 +50,20 @@ def load_data():
             "تاريخ_الاعتماد_الفعلي", "تاريخ_الشحن_المتوقع", 
             "تاريخ_الشحن_الفعلي", "تاريخ_الوصول_المتوقع", "تاريخ_الوصول_الفعلي"
         ]
-        
         if df.empty: return pd.DataFrame(columns=columns)
-        
         for col in columns:
             if col not in df.columns: df[col] = None
         
         numeric_cols = ["القيمة_دولار", "سعر_الصرف", "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
-        # إصلاح معرف ID
+        
         df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0).astype(int)
+        
+        # تحويل التواريخ إلى datetime لضمان عمل المخطط
+        date_cols = ["تاريخ_الاعتماد_الفعلي", "تاريخ_الشحن_المتوقع", "تاريخ_الشحن_الفعلي", "تاريخ_الوصول_المتوقع", "تاريخ_الوصول_الفعلي"]
+        for col in date_cols:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
             
         return df
     except:
@@ -88,21 +74,19 @@ df = load_data()
 # --- 3. الواجهة الرئيسية ---
 st.title("🚢 نظام إدارة المشتريات (اللوحة الكاملة)")
 
-# القائمة الجانبية
 with st.sidebar:
     st.header("📝 تسجيل طلبية جديدة")
     with st.form("add_order_form"):
         order_name = st.text_input("اسم الطلبية / الصنف")
         supplier = st.text_input("اسم المورد")
         c1, c2 = st.columns(2)
-        val_usd = c1.number_input("قيمة الفاتورة ($)", min_value=0.0, step=100.0)
+        val_usd = c1.number_input("قيمة ($)", min_value=0.0, step=100.0)
         rate = c2.number_input("سعر الصرف", value=3.75, step=0.01)
         
         goods_sar = val_usd * rate
         fees_sar = val_usd * FEES_FACTOR
         total_sar = goods_sar + fees_sar
-        
-        st.info(f"💰 الإجمالي المقدر: {total_sar:,.0f} ريال")
+        st.info(f"الإجمالي: {total_sar:,.0f} ريال")
         
         st.markdown("---")
         p1, p2, p3 = st.columns(3)
@@ -115,17 +99,16 @@ with st.sidebar:
         notes = st.text_area("ملاحظات")
         
         submitted = st.form_submit_button("💾 حفظ الطلبية")
-        
         if submitted:
             if order_name and val_usd > 0:
                 new_id = 1
-                if not df.empty and 'ID' in df.columns and len(df) > 0:
+                if not df.empty and len(df) > 0:
                     try: new_id = int(df['ID'].max()) + 1
                     except: new_id = 1
                 
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                d_conf = today_str if status == "تم الاعتماد" else None
-                d_ship_exp = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d") if status == "تم الاعتماد" else None
+                today = datetime.now()
+                d_conf = today if status == "تم الاعتماد" else None
+                d_ship_exp = (today + timedelta(days=30)) if status == "تم الاعتماد" else None
                 
                 new_row = pd.DataFrame([{
                     "ID": new_id, "الطلبية": order_name, "المورد": supplier,
@@ -140,13 +123,12 @@ with st.sidebar:
                 conn.update(worksheet="Sheet1", data=updated_df)
                 st.success("تمت الإضافة!"); st.cache_data.clear(); st.rerun()
 
-# --- 4. لوحة الإحصائيات ---
+# --- 4. الكروت العلوية ---
 if not df.empty:
     total_cost_all = df['اجمالي_التكلفة'].sum()
     total_paid = df['المدفوع'].sum()
     total_rem = df['المتبقي'].sum()
     val_in_transit = df[df['الحالة'].isin(["تم الشحن", "تخليص جمركي"])]['اجمالي_التكلفة'].sum()
-    
     total_orders = len(df)
     cnt_shipped = len(df[df['الحالة'] == "تم الشحن"])
     cnt_customs = len(df[df['الحالة'] == "تخليص جمركي"])
@@ -155,43 +137,109 @@ else:
     total_cost_all = 0; total_paid = 0; total_rem = 0; val_in_transit = 0
     total_orders = 0; cnt_shipped = 0; cnt_customs = 0; cnt_arrived = 0
 
-st.markdown("### 📊 الموقف المالي والتشغيلي")
-
 k1, k2, k3, k4 = st.columns(4)
-k1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الالتزام (بضاعة+رسوم)</div><div class="metric-value">{total_cost_all:,.0f}</div></div>', unsafe_allow_html=True)
-k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع فعلياً</div><div class="metric-value" style="color:#27ae60 !important">{total_paid:,.0f}</div></div>', unsafe_allow_html=True)
-k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي للسداد</div><div class="metric-value" style="color:#c0392b !important">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
-k4.markdown(f'<div class="metric-card"><div class="metric-title">قيمة بضاعة في الطريق</div><div class="metric-value" style="color:#e67e22 !important">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
+k1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الالتزام</div><div class="metric-value">{total_cost_all:,.0f}</div></div>', unsafe_allow_html=True)
+k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع</div><div class="metric-value" style="color:#27ae60 !important">{total_paid:,.0f}</div></div>', unsafe_allow_html=True)
+k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي</div><div class="metric-value" style="color:#c0392b !important">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
+k4.markdown(f'<div class="metric-card"><div class="metric-title">بضاعة بالطريق</div><div class="metric-value" style="color:#e67e22 !important">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 s1, s2, s3, s4 = st.columns(4)
-s1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الطلبات</div><div class="metric-value">{total_orders}</div><div class="metric-sub">نشطة ومكتملة</div></div>', unsafe_allow_html=True)
-s2.markdown(f'<div class="metric-card"><div class="metric-title">شحنات في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div><div class="metric-sub">تم الشحن</div></div>', unsafe_allow_html=True)
-s3.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div><div class="metric-sub">تخليص</div></div>', unsafe_allow_html=True)
-s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60 !important">{cnt_arrived}</div><div class="metric-sub">في المستودع</div></div>', unsafe_allow_html=True)
+s1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الطلبات</div><div class="metric-value">{total_orders}</div></div>', unsafe_allow_html=True)
+s2.markdown(f'<div class="metric-card"><div class="metric-title">في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div></div>', unsafe_allow_html=True)
+s3.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div></div>', unsafe_allow_html=True)
+s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60 !important">{cnt_arrived}</div></div>', unsafe_allow_html=True)
 
 st.divider()
 
-# --- 5. منطقة العمل ---
-c_left, c_right = st.columns([2, 1])
+# --- 5. الجدول الزمني (Timeline Chart) ---
+st.subheader("🗓️ الجدول الزمني للطلبات (Timeline)")
+
+if not df.empty:
+    timeline_data = []
+    
+    for _, row in df.iterrows():
+        # تحديد التواريخ والمراحل
+        start_date = row['تاريخ_الاعتماد_الفعلي']
+        if pd.isna(start_date): start_date = datetime.now() # افتراضي للي ما بدأ
+        
+        # 1. حالة الوصول النهائي (أخضر كامل)
+        if row['الحالة'] in ["وصلت للمستودع", "مسددة بالكامل"]:
+            end_date = row['تاريخ_الوصول_الفعلي']
+            if pd.isna(end_date): end_date = datetime.now()
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مكتملة", Color="#27ae60")) # أخضر
+            
+        # 2. حالة لم تبدأ بعد (رمادي - توقع)
+        elif row['الحالة'] == "لم يبدأ":
+            end_date = start_date + timedelta(days=60) # افتراضي
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=end_date, Stage="مجدولة", Color="#95a5a6")) # رمادي
+            
+        # 3. حالات قيد التنفيذ (تقسيم المراحل)
+        else:
+            # مرحلة التجهيز (من الاعتماد للشحن)
+            ship_date = row['تاريخ_الشحن_الفعلي']
+            ship_exp = row['تاريخ_الشحن_المتوقع']
+            
+            # إذا لم تشحن بعد، نستخدم المتوقع
+            phase1_end = ship_date if pd.notna(ship_date) else (ship_exp if pd.notna(ship_exp) else start_date + timedelta(days=30))
+            
+            timeline_data.append(dict(Task=row['الطلبية'], Start=start_date, Finish=phase1_end, Stage="تجهيز/تصنيع", Color="#3498db")) # أزرق
+            
+            # إذا شحنت، نضيف مرحلة الشحن (من الشحن للوصول المتوقع)
+            if row['الحالة'] in ["تم الشحن", "تخليص جمركي"]:
+                arrive_exp = row['تاريخ_الوصول_المتوقع']
+                phase2_end = arrive_exp if pd.notna(arrive_exp) else phase1_end + timedelta(days=30)
+                
+                # لون الشحن برتقالي، التخليص أحمر فاتح
+                color_phase2 = "#e67e22" if row['الحالة'] == "تم الشحن" else "#e74c3c"
+                stage_name = "شحن دولي" if row['الحالة'] == "تم الشحن" else "تخليص جمركي"
+                
+                timeline_data.append(dict(Task=row['الطلبية'], Start=phase1_end, Finish=phase2_end, Stage=stage_name, Color=color_phase2))
+
+    if timeline_data:
+        df_gantt = pd.DataFrame(timeline_data)
+        
+        # رسم المخطط
+        fig = px.timeline(
+            df_gantt, 
+            x_start="Start", 
+            x_end="Finish", 
+            y="Task", 
+            color="Color",
+            title="تتبع حالة الشحنات زمنياً",
+            color_discrete_map="identity", # استخدام الألوان المحددة في الداتا
+            height=300 + (len(df)*30) # ارتفاع ديناميكي
+        )
+        
+        fig.update_yaxes(autorange="reversed", title="") # ترتيب من الأقدم للأحدث
+        fig.update_xaxes(title="التاريخ")
+        fig.update_layout(showlegend=False, xaxis_gridcolor='#eee')
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("سجل تواريخ للطلبات لتظهر في الجدول الزمني.")
+
+st.divider()
+
+# --- 6. منطقة العمل (جدول + تحديث) ---
+c_left, c_right = st.columns([1.8, 1])
 
 with c_left:
-    st.subheader("📋 سجل المشتريات والتواريخ")
-    
+    st.subheader("📋 البيانات التفصيلية")
     col_config = {
         "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
         "الطلبية": st.column_config.TextColumn(width="medium"),
         "القيمة_دولار": st.column_config.NumberColumn("$", format="%.2f"),
-        "تاريخ_الشحن_المتوقع": st.column_config.DateColumn("ت. شحن (متوقع)", format="DD/MM/YYYY", disabled=True),
-        "تاريخ_الوصول_المتوقع": st.column_config.DateColumn("ت. وصول (متوقع)", format="DD/MM/YYYY", disabled=True),
+        "تاريخ_الشحن_المتوقع": st.column_config.DateColumn("ت. شحن", format="DD/MM/YYYY", disabled=True),
+        "تاريخ_الوصول_المتوقع": st.column_config.DateColumn("ت. وصول", format="DD/MM/YYYY", disabled=True),
         "الحالة": st.column_config.SelectboxColumn(options=STATUS_LIST),
         "المتبقي": st.column_config.NumberColumn(format="%.0f", disabled=True),
     }
     
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, column_config=col_config, key="main_editor")
     
-    if st.button("💾 حفظ تعديلات الجدول"):
+    if st.button("💾 حفظ التعديلات"):
         edited_df['قيمة_البضاعة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
         edited_df['رسوم_شحن_تخليص'] = edited_df['القيمة_دولار'] * FEES_FACTOR
         edited_df['اجمالي_التكلفة'] = edited_df['قيمة_البضاعة_ريال'] + edited_df['رسوم_شحن_تخليص']
@@ -201,8 +249,7 @@ with c_left:
         st.cache_data.clear(); st.rerun()
 
 with c_right:
-    st.subheader("⚙️ تحديث الحالة والجدولة")
-    
+    st.subheader("⚙️ تحديث الحالة")
     if not df.empty:
         df['ID_str'] = df['ID'].astype(str)
         order_options = df['ID_str'] + " - " + df['الطلبية']
@@ -213,64 +260,40 @@ with c_right:
             except: st.stop()
 
             current_order = df[df['ID'] == selected_id].iloc[0]
-            curr_status = current_order['الحالة']
             
             st.markdown(f"""
             <div class="plan-box">
-            📅 <b>الموقف الزمني للطلبية:</b><br>
-            • الاعتماد الفعلي: {current_order.get('تاريخ_الاعتماد_الفعلي') or '--'}<br>
-            • الشحن المتوقع: <b>{current_order.get('تاريخ_الشحن_المتوقع') or '--'}</b><br>
-            • الوصول المتوقع: <b>{current_order.get('تاريخ_الوصول_المتوقع') or '--'}</b>
+            <b>{current_order['الطلبية']}</b><br>
+            الحالة الحالية: <b>{current_order['الحالة']}</b><br>
+            المتبقي: {current_order['المتبقي']:,.0f} ريال
             </div>
             """, unsafe_allow_html=True)
             
-            with st.form("payment_form"):
-                new_transfer = st.number_input("مبلغ دفعة جديدة (ريال)", min_value=0.0, step=1000.0)
-                try: idx_status = STATUS_LIST.index(curr_status)
+            with st.form("update_form"):
+                new_transfer = st.number_input("تسجيل دفعة (ريال)", min_value=0.0, step=1000.0)
+                try: idx_status = STATUS_LIST.index(current_order['الحالة'])
                 except: idx_status = 0
                 new_status = st.selectbox("تحديث الحالة", STATUS_LIST, index=idx_status)
                 
-                if st.form_submit_button("تنفيذ التحديث"):
+                if st.form_submit_button("حفظ"):
                     idx = df.index[df['ID'] == selected_id][0]
-                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    today = datetime.now()
                     
-                    if new_status == "تم الاعتماد" and curr_status != "تم الاعتماد":
-                        df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today_str
-                        df.at[idx, 'تاريخ_الشحن_المتوقع'] = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+                    if new_status == "تم الاعتماد" and current_order['الحالة'] != "تم الاعتماد":
+                        df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today
+                        df.at[idx, 'تاريخ_الشحن_المتوقع'] = today + timedelta(days=30)
                     
-                    if new_status == "تم الشحن" and curr_status != "تم الشحن":
-                        df.at[idx, 'تاريخ_الشحن_الفعلي'] = today_str
-                        df.at[idx, 'تاريخ_الوصول_المتوقع'] = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+                    if new_status == "تم الشحن" and current_order['الحالة'] != "تم الشحن":
+                        df.at[idx, 'تاريخ_الشحن_الفعلي'] = today
+                        df.at[idx, 'تاريخ_الوصول_المتوقع'] = today + timedelta(days=30)
                         
-                    if new_status in ["وصلت للمستودع", "مسددة بالكامل"] and curr_status not in ["وصلت للمستودع", "مسددة بالكامل"]:
-                        df.at[idx, 'تاريخ_الوصول_الفعلي'] = today_str
+                    if new_status in ["وصلت للمستودع", "مسددة بالكامل"] and current_order['الحالة'] not in ["وصلت للمستودع", "مسددة بالكامل"]:
+                        df.at[idx, 'تاريخ_الوصول_الفعلي'] = today
 
-                    new_total_paid = current_order['المدفوع'] + new_transfer
-                    df.at[idx, 'المدفوع'] = new_total_paid
-                    df.at[idx, 'المتبقي'] = current_order['اجمالي_التكلفة'] - new_total_paid
+                    df.at[idx, 'المدفوع'] = current_order['المدفوع'] + new_transfer
+                    df.at[idx, 'المتبقي'] = current_order['اجمالي_التكلفة'] - (current_order['المدفوع'] + new_transfer)
                     df.at[idx, 'الحالة'] = new_status
                     
                     conn.update(worksheet="Sheet1", data=df)
-                    st.success("تم تحديث الحالة والتواريخ والماليات!")
+                    st.success("تم!")
                     st.cache_data.clear(); st.rerun()
-
-# --- 6. النظرة المستقبلية ---
-st.divider()
-if not df.empty:
-    future = df[
-        (df['تاريخ_الوصول_المتوقع'].notna()) & 
-        (~df['الحالة'].isin(["وصلت للمستودع", "مسددة بالكامل"]))
-    ].sort_values('تاريخ_الوصول_المتوقع')
-    
-    if not future.empty:
-        st.subheader("🔮 النظرة المستقبلية (القادم بالطريق)")
-        future_display = future[['الطلبية', 'المورد', 'الحالة', 'تاريخ_الوصول_المتوقع', 'اجمالي_التكلفة', 'المتبقي']].copy()
-        st.dataframe(
-            future_display,
-            use_container_width=True,
-            column_config={
-                "تاريخ_الوصول_المتوقع": st.column_config.DateColumn("📆 متوقع الوصول", format="DD/MM/YYYY"),
-                "المتبقي": st.column_config.NumberColumn("مطلوب سداده", format="%.0f"),
-                "اجمالي_التكلفة": st.column_config.NumberColumn("قيمة الشحنة", format="%.0f"),
-            }
-        )
