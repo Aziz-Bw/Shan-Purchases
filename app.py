@@ -29,16 +29,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- قائمة الحالات المعتمدة ---
-STATUS_LIST = [
-    "لم يبدأ", 
-    "تم الاعتماد", 
-    "جاري التجهيز", 
-    "تم الشحن", 
-    "تخليص جمركي", 
-    "وصلت للمستودع", 
-    "مسددة بالكامل"
-]
+# --- الثوابت ---
+STATUS_LIST = ["لم يبدأ", "تم الاعتماد", "جاري التجهيز", "تم الشحن", "تخليص جمركي", "وصلت للمستودع", "مسددة بالكامل"]
+FEES_FACTOR = 0.744  # معامل الشحن والجمارك
 
 # --- 2. الاتصال بجوجل شيت ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -47,8 +40,10 @@ def load_data():
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
         
+        # الأعمدة المحدثة (إضافة الرسوم والاجمالي الكلي)
         columns = [
-            "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", "القيمة_ريال", 
+            "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", 
+            "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", 
             "المدفوع", "المتبقي", "الحالة", "تاريخ_الوصول", "ملاحظات",
             "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"
         ]
@@ -58,18 +53,18 @@ def load_data():
         for col in columns:
             if col not in df.columns: df[col] = None
         
-        numeric_cols = ["القيمة_دولار", "سعر_الصرف", "القيمة_ريال", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
+        numeric_cols = ["القيمة_دولار", "سعر_الصرف", "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
         return df
     except:
-        return pd.DataFrame(columns=["ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", "القيمة_ريال", "المدفوع", "المتبقي", "الحالة", "تاريخ_الوصول", "ملاحظات", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"])
+        return pd.DataFrame() # إرجاع فارغ عند الخطأ
 
 df = load_data()
 
 # --- 3. الواجهة الرئيسية ---
-st.title("📦 نظام إدارة المشتريات والاعتمادات")
+st.title("📦 نظام إدارة المشتريات (شامل الشحن والجمارك)")
 
 # القائمة الجانبية (إضافة جديد)
 with st.sidebar:
@@ -80,8 +75,21 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         val_usd = c1.number_input("قيمة الفاتورة ($)", min_value=0.0, step=100.0)
         rate = c2.number_input("سعر الصرف", value=3.75, step=0.01)
+        
+        # عرض معاينة الحسابات
+        goods_sar = val_usd * rate
+        fees_sar = val_usd * FEES_FACTOR
+        total_sar = goods_sar + fees_sar
+        
+        st.info(f"""
+        💰 **تحليل التكلفة المقدرة:**
+        - قيمة البضاعة: {goods_sar:,.0f} ريال
+        - شحن وتخليص (0.744): {fees_sar:,.0f} ريال
+        - **الإجمالي الكلي: {total_sar:,.0f} ريال**
+        """)
+        
         st.markdown("---")
-        st.markdown("###### 📊 نسب السداد المقترحة")
+        st.markdown("###### 📊 نسب السداد")
         p1, p2, p3 = st.columns(3)
         pct_start = p1.number_input("اعتماد %", value=30)
         pct_ship = p2.number_input("شحن %", value=20)
@@ -94,7 +102,6 @@ with st.sidebar:
         
         if submitted:
             if order_name and val_usd > 0:
-                val_sar = val_usd * rate
                 new_id = 1
                 if not df.empty and 'ID' in df.columns and pd.notna(df['ID'].max()):
                     try: new_id = int(df['ID'].max()) + 1
@@ -102,8 +109,11 @@ with st.sidebar:
                 
                 new_row = pd.DataFrame([{
                     "ID": new_id, "الطلبية": order_name, "المورد": supplier,
-                    "القيمة_دولار": val_usd, "سعر_الصرف": rate, "القيمة_ريال": val_sar,
-                    "المدفوع": 0.0, "المتبقي": val_sar, "الحالة": status,
+                    "القيمة_دولار": val_usd, "سعر_الصرف": rate, 
+                    "قيمة_البضاعة_ريال": goods_sar,
+                    "رسوم_شحن_تخليص": fees_sar,
+                    "اجمالي_التكلفة": total_sar,
+                    "المدفوع": 0.0, "المتبقي": total_sar, "الحالة": status,
                     "تاريخ_الوصول": str(arrival_date), "ملاحظات": notes,
                     "نسبة_اعتماد": pct_start, "نسبة_شحن": pct_ship, "نسبة_وصول": pct_arrive
                 }])
@@ -111,55 +121,48 @@ with st.sidebar:
                 conn.update(worksheet="Sheet1", data=updated_df)
                 st.success("تمت الإضافة!"); st.cache_data.clear(); st.rerun()
 
-# --- 4. لوحة الإحصائيات (KPIs Dashboard) ---
+# --- 4. لوحة الإحصائيات ---
 if not df.empty:
-    # المالي
-    total_sar = df['القيمة_ريال'].sum()
+    total_cost_all = df['اجمالي_التكلفة'].sum() # الالتزام الكلي (بضاعة + رسوم)
     total_paid = df['المدفوع'].sum()
     total_rem = df['المتبقي'].sum()
+    total_fees = df['رسوم_شحن_تخليص'].sum() # اجمالي الرسوم فقط
     
-    # التشغيلي (الأعداد)
     total_orders = len(df)
-    cnt_approved = len(df[df['الحالة'] == "تم الاعتماد"])
-    cnt_processing = len(df[df['الحالة'] == "جاري التجهيز"])
     cnt_shipped = len(df[df['الحالة'] == "تم الشحن"])
     cnt_customs = len(df[df['الحالة'] == "تخليص جمركي"])
     cnt_arrived = len(df[df['الحالة'].isin(["وصلت للمستودع", "مسددة بالكامل"])])
     
-    # قيم البضاعة في الطريق (شحن + جمارك)
-    val_in_transit = df[df['الحالة'].isin(["تم الشحن", "تخليص جمركي"])]['القيمة_ريال'].sum()
+    # قيمة بضاعة بالطريق (نعتمد على اجمالي التكلفة لأننا ندفع الرسوم في الطريق عادة)
+    val_in_transit = df[df['الحالة'].isin(["تم الشحن", "تخليص جمركي"])]['اجمالي_التكلفة'].sum()
 else:
-    total_sar = 0; total_paid = 0; total_rem = 0
-    total_orders = 0; cnt_approved = 0; cnt_processing = 0; cnt_shipped = 0; cnt_customs = 0; cnt_arrived = 0; val_in_transit = 0
+    total_cost_all = 0; total_paid = 0; total_rem = 0; total_fees = 0
+    total_orders = 0; cnt_shipped = 0; cnt_customs = 0; cnt_arrived = 0; val_in_transit = 0
 
-st.markdown("### 📊 الموقف المالي والتشغيلي")
+st.markdown("### 📊 الموقف المالي (شامل الشحن والجمارك)")
 
-# الصف الأول: الملخص المالي العام
 k1, k2, k3, k4 = st.columns(4)
-k1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الالتزامات (الكل)</div><div class="metric-value">{total_sar:,.0f}</div><div class="metric-sub">قيمة البضاعة بالريال</div></div>', unsafe_allow_html=True)
-k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع فعلياً</div><div class="metric-value" style="color:#27ae60">{total_paid:,.0f}</div><div class="metric-sub">تحويلات بنكية</div></div>', unsafe_allow_html=True)
-k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي للسداد</div><div class="metric-value" style="color:#c0392b">{total_rem:,.0f}</div><div class="metric-sub">التزام قائم</div></div>', unsafe_allow_html=True)
-k4.markdown(f'<div class="metric-card"><div class="metric-title">قيمة بضاعة بالطريق</div><div class="metric-value" style="color:#e67e22">{val_in_transit:,.0f}</div><div class="metric-sub">شحن + جمارك</div></div>', unsafe_allow_html=True)
+k1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الالتزام (بضاعة+رسوم)</div><div class="metric-value">{total_cost_all:,.0f}</div><div class="metric-sub">منها {total_fees:,.0f} رسوم مقدرة</div></div>', unsafe_allow_html=True)
+k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع فعلياً</div><div class="metric-value" style="color:#27ae60">{total_paid:,.0f}</div><div class="metric-sub">بنوك + رسوم</div></div>', unsafe_allow_html=True)
+k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي للسداد</div><div class="metric-value" style="color:#c0392b">{total_rem:,.0f}</div><div class="metric-sub">سيولة مطلوبة</div></div>', unsafe_allow_html=True)
+k4.markdown(f'<div class="metric-card"><div class="metric-title">التزام بضاعة في الطريق</div><div class="metric-value" style="color:#e67e22">{val_in_transit:,.0f}</div><div class="metric-sub">شحن + جمارك</div></div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# الصف الثاني: تفاصيل حالات الطلبات
-s1, s2, s3, s4, s5 = st.columns(5)
+s1, s2, s3, s4 = st.columns(4)
 s1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الطلبات</div><div class="metric-value">{total_orders}</div></div>', unsafe_allow_html=True)
-s2.markdown(f'<div class="metric-card"><div class="metric-title">تم الاعتماد</div><div class="metric-value">{cnt_approved}</div><div class="metric-sub">تحت الإجراء</div></div>', unsafe_allow_html=True)
-s3.markdown(f'<div class="metric-card"><div class="metric-title">تم الشحن</div><div class="metric-value">{cnt_shipped}</div><div class="metric-sub">في البحر/الجو</div></div>', unsafe_allow_html=True)
-s4.markdown(f'<div class="metric-card"><div class="metric-title">تخليص جمركي</div><div class="metric-value">{cnt_customs}</div><div class="metric-sub">في الميناء</div></div>', unsafe_allow_html=True)
-s5.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60">{cnt_arrived}</div><div class="metric-sub">مكتملة</div></div>', unsafe_allow_html=True)
+s2.markdown(f'<div class="metric-card"><div class="metric-title">في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div></div>', unsafe_allow_html=True)
+s3.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div></div>', unsafe_allow_html=True)
+s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60">{cnt_arrived}</div></div>', unsafe_allow_html=True)
 
 st.divider()
 
-# --- 5. منطقة العمل (التعديل + تسجيل الحوالات) ---
-c_left, c_right = st.columns([1.6, 1])
+# --- 5. منطقة العمل ---
+c_left, c_right = st.columns([1.8, 1])
 
 with c_left:
-    st.subheader("📋 سجل الطلبات (قابل للتعديل)")
+    st.subheader("📋 سجل المشتريات التفصيلي")
     
-    # عرض الجدول دائماً
     edited_df = st.data_editor(
         df,
         num_rows="dynamic",
@@ -167,29 +170,35 @@ with c_left:
         column_config={
             "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
             "الطلبية": st.column_config.TextColumn(width="medium"),
-            "القيمة_دولار": st.column_config.NumberColumn("قيمة ($)", format="%.2f"),
+            "القيمة_دولار": st.column_config.NumberColumn("$ فاتورة", format="%.2f"),
             "سعر_الصرف": st.column_config.NumberColumn("صرف", format="%.2f"),
-            "القيمة_ريال": st.column_config.NumberColumn("قيمة (ريال)", format="%.0f", disabled=True),
+            "قيمة_البضاعة_ريال": st.column_config.NumberColumn("بضاعة (ر.س)", format="%.0f", disabled=True),
+            "رسوم_شحن_تخليص": st.column_config.NumberColumn("شحن وجمارك", format="%.0f", disabled=True, help="محسوبة تلقائياً: دولار * 0.744"),
+            "اجمالي_التكلفة": st.column_config.NumberColumn("الإجمالي الكلي", format="%.0f", disabled=True),
             "المدفوع": st.column_config.NumberColumn(format="%.0f", disabled=True),
             "المتبقي": st.column_config.NumberColumn(format="%.0f", disabled=True),
             "الحالة": st.column_config.SelectboxColumn(options=STATUS_LIST),
-            "نسبة_اعتماد": st.column_config.NumberColumn("% اعتماد", width="small"),
-            "نسبة_شحن": st.column_config.NumberColumn("% شحن", width="small"),
-            "نسبة_وصول": st.column_config.NumberColumn("% وصول", width="small"),
+            "نسبة_اعتماد": st.column_config.NumberColumn("% 1", width="small"),
+            "نسبة_شحن": st.column_config.NumberColumn("% 2", width="small"),
+            "نسبة_وصول": st.column_config.NumberColumn("% 3", width="small"),
         },
         key="main_editor"
     )
     
-    if st.button("💾 حفظ تعديلات الجدول"):
-        edited_df['القيمة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
-        edited_df['المتبقي'] = edited_df['القيمة_ريال'] - edited_df['المدفوع']
+    if st.button("💾 حفظ وإعادة حساب الرسوم"):
+        # المعادلات المحاسبية
+        edited_df['قيمة_البضاعة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
+        edited_df['رسوم_شحن_تخليص'] = edited_df['القيمة_دولار'] * FEES_FACTOR
+        edited_df['اجمالي_التكلفة'] = edited_df['قيمة_البضاعة_ريال'] + edited_df['رسوم_شحن_تخليص']
+        edited_df['المتبقي'] = edited_df['اجمالي_التكلفة'] - edited_df['المدفوع']
+        
         conn.update(worksheet="Sheet1", data=edited_df)
-        st.success("تم التحديث!")
+        st.success("تم تحديث الحسابات وحفظ البيانات!")
         st.cache_data.clear()
         st.rerun()
 
 with c_right:
-    st.subheader("💸 تسجيل الحوالات وتحديث الحالة")
+    st.subheader("💸 إدارة المدفوعات")
     
     if not df.empty:
         order_options = df['ID'].astype(str) + " - " + df['الطلبية']
@@ -199,60 +208,63 @@ with c_right:
             selected_id = int(str(selected_option).split(" - ")[0])
             current_order = df[df['ID'] == selected_id].iloc[0]
             
-            total_val = current_order['القيمة_ريال']
+            # تفكيك التكلفة
+            goods_cost = current_order['قيمة_البضاعة_ريال']
+            fees_cost = current_order['رسوم_شحن_تخليص']
+            total_cost = current_order['اجمالي_التكلفة']
             paid_val = current_order['المدفوع']
-            curr_status = current_order['الحالة']
             
-            amount_start = total_val * (current_order['نسبة_اعتماد'] / 100)
-            amount_ship = total_val * (current_order['نسبة_شحن'] / 100)
-            amount_arrive = total_val * (current_order['نسبة_وصول'] / 100)
+            # حسبة الدفعات (على أساس قيمة البضاعة فقط عادة، أو الإجمالي؟)
+            # هنا سنحسب النسب بناء على الإجمالي الكلي (بضاعة + رسوم) لضمان تغطية كامل المبلغ
+            # أو يمكن جعل الرسوم منفصلة.. لتبسيط الموازنة سنجعل النسب من الاجمالي
+            amount_start = total_cost * (current_order['نسبة_اعتماد'] / 100)
+            amount_ship = total_cost * (current_order['نسبة_شحن'] / 100)
+            amount_arrive = total_cost * (current_order['نسبة_وصول'] / 100)
             
             st.markdown(f"""
             <div class="plan-box">
-            <b>تحليل الدفعات المستحقة:</b><br>
-            🔸 دفعة الاعتماد ({current_order['نسبة_اعتماد']}%): <b>{amount_start:,.0f}</b><br>
-            🔸 دفعة الشحن ({current_order['نسبة_شحن']}%): <b>{amount_ship:,.0f}</b><br>
-            🔸 دفعة الوصول ({current_order['نسبة_وصول']}%): <b>{amount_arrive:,.0f}</b><br>
-            <hr style="margin:5px 0">
-            💵 <b>المدفوع فعلياً: {paid_val:,.0f}</b> | المتبقي: <b>{(total_val - paid_val):,.0f}</b>
+            <b>تفاصيل التكلفة:</b><br>
+            📦 بضاعة: {goods_cost:,.0f} | ⚓ رسوم: {fees_cost:,.0f}<br>
+            💵 <b>الإجمالي المطلوب: {total_cost:,.0f} ريال</b>
+            <hr>
+            <b>خطة الدفع المقترحة (من الإجمالي):</b><br>
+            1️⃣ اعتماد: {amount_start:,.0f}<br>
+            2️⃣ شحن: {amount_ship:,.0f}<br>
+            3️⃣ وصول: {amount_arrive:,.0f}<br>
+            <hr>
+            ✅ <b>المدفوع: {paid_val:,.0f}</b> | المتبقي: <b>{(total_cost - paid_val):,.0f}</b>
             </div>
             """, unsafe_allow_html=True)
             
             with st.form("payment_form"):
-                new_transfer = st.number_input("مبلغ الحوالة الجديدة (ريال)", min_value=0.0, step=1000.0)
+                new_transfer = st.number_input("تسجيل مبلغ مدفوع (ريال)", min_value=0.0, step=1000.0)
                 
-                # تحديد الاندكس الحالي للحالة في القائمة
-                try:
-                    idx_status = STATUS_LIST.index(curr_status)
-                except:
-                    idx_status = 0
-                    
-                update_status_pay = st.selectbox("تحديث حالة الطلبية", STATUS_LIST, index=idx_status)
+                try: idx_status = STATUS_LIST.index(current_order['الحالة'])
+                except: idx_status = 0
+                update_status_pay = st.selectbox("تحديث الحالة", STATUS_LIST, index=idx_status)
                 
-                if st.form_submit_button("حفظ التحديث"):
+                if st.form_submit_button("حفظ الدفعة"):
                     idx = df.index[df['ID'] == selected_id][0]
                     new_total = paid_val + new_transfer
                     
-                    if new_total > total_val:
-                        st.error("المبلغ أكبر من قيمة الطلبية!")
+                    if new_total > total_cost:
+                        st.error("المبلغ المدفوع أكبر من إجمالي التكلفة!")
                     else:
                         df.at[idx, 'المدفوع'] = new_total
-                        df.at[idx, 'المتبقي'] = total_val - new_total
+                        df.at[idx, 'المتبقي'] = total_cost - new_total
                         df.at[idx, 'الحالة'] = update_status_pay
                         conn.update(worksheet="Sheet1", data=df)
-                        st.success("تم تسجيل العملية!")
+                        st.success("تم الحفظ!")
                         st.cache_data.clear()
                         st.rerun()
     else:
-        st.info("سجل طلبية أولاً لتفعيل الدفعات.")
+        st.info("سجل طلبية أولاً.")
 
 # --- 6. التنبيهات ---
 st.divider()
 if not df.empty:
-    # التنبيه للحالات النشطة فقط (شحن، جمارك، تجهيز)
     alert_statuses = ["تم الشحن", "تخليص جمركي", "جاري التجهيز", "تم الاعتماد"]
     upcoming = df[df['الحالة'].isin(alert_statuses)].sort_values('تاريخ_الوصول')
-    
     if not upcoming.empty:
         st.subheader("📅 متابعة الوصول")
         for _, row in upcoming.iterrows():
