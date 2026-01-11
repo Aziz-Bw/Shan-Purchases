@@ -93,7 +93,7 @@ def load_data():
                 oid = row['ID']
                 paid_amt = real_paid[real_paid['OrderID'] == oid]['المبلغ'].sum()
                 df_orders.at[index, 'المدفوع'] = paid_amt
-                df_orders.at[index, 'المتبقي'] = row['aجمالي_التكلفة'] - paid_amt # سيتم تصحيحه في الاسفل
+                df_orders.at[index, 'المتبقي'] = row['إجمالي_التكلفة'] - paid_amt # سيتم تصحيحه في الاسفل
 
         # إعادة حساب المتبقي للجميع
         df_orders['المتبقي'] = df_orders['اجمالي_التكلفة'] - df_orders['المدفوع']
