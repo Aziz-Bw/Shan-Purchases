@@ -42,20 +42,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # تحميل الطلبات
         df_orders = conn.read(worksheet="Sheet1", ttl=0)
-        
-        # تحميل الدفعات (من الصفحة الثانية payments)
         try:
             df_payments = conn.read(worksheet="payments", ttl=0)
         except:
-            df_payments = pd.DataFrame() # إذا لم توجد الصفحة
+            df_payments = pd.DataFrame() 
 
-        # --- إصلاح مشكلة الهمزة تلقائياً ---
-        # نوحد التسمية لتكون "اجمالي" (بدون همزة) لتتطابق مع الكود
+        # إصلاح الهمزة
         df_orders.rename(columns=lambda x: x.replace('إجمالي', 'اجمالي'), inplace=True)
 
-        # --- تجهيز جدول الطلبات ---
         ord_cols = [
             "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", 
             "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", 
@@ -65,52 +60,40 @@ def load_data():
             "تاريخ_الشحن_الفعلي", "تاريخ_الوصول_المتوقع", "تاريخ_الوصول_الفعلي"
         ]
         
-        # إنشاء الأعمدة الناقصة
-        if df_orders.empty: 
-            df_orders = pd.DataFrame(columns=ord_cols)
+        if df_orders.empty: df_orders = pd.DataFrame(columns=ord_cols)
         else:
             for col in ord_cols:
-                if col not in df_orders.columns: 
-                    df_orders[col] = None
+                if col not in df_orders.columns: df_orders[col] = None
             
-        # --- تجهيز جدول الدفعات ---
         pay_cols = ["PaymentID", "OrderID", "التاريخ", "المبلغ", "البيان", "رابط_السند"]
         if df_payments.empty: df_payments = pd.DataFrame(columns=pay_cols)
         for col in pay_cols:
             if col not in df_payments.columns: df_payments[col] = None
 
-        # تحويل الأرقام (Orders)
         num_cols = ["القيمة_دولار", "سعر_الصرف", "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", "المدفوع", "المتبقي", "نسبة_اعتماد", "نسبة_شحن", "نسبة_وصول"]
         for col in num_cols: 
             if col in df_orders.columns:
                 df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0)
         
         df_orders['ID'] = pd.to_numeric(df_orders['ID'], errors='coerce').fillna(0).astype(int)
-        
-        # تحويل الأرقام (Payments)
         df_payments['PaymentID'] = pd.to_numeric(df_payments['PaymentID'], errors='coerce').fillna(0).astype(int)
         df_payments['OrderID'] = pd.to_numeric(df_payments['OrderID'], errors='coerce').fillna(0).astype(int)
         df_payments['المبلغ'] = pd.to_numeric(df_payments['المبلغ'], errors='coerce').fillna(0)
 
-        # تحويل التواريخ
         date_cols = ["تاريخ_الاعتماد_الفعلي", "تاريخ_الشحن_المتوقع", "تاريخ_الشحن_الفعلي", "تاريخ_الوصول_المتوقع", "تاريخ_الوصول_الفعلي"]
         for col in date_cols: 
             if col in df_orders.columns:
                 df_orders[col] = pd.to_datetime(df_orders[col], errors='coerce')
         
-        # *** المزامنة الذكية ***
-        # نعيد حساب "المدفوع" في جدول الطلبات بناءً على مجموع الدفعات في جدول الدفعات
         if not df_payments.empty:
             real_paid = df_payments.groupby('OrderID')['المبلغ'].sum().reset_index()
             for index, row in df_orders.iterrows():
                 oid = row['ID']
                 paid_amt = real_paid[real_paid['OrderID'] == oid]['المبلغ'].sum()
                 df_orders.at[index, 'المدفوع'] = paid_amt
-                # هنا قمنا بتصحيح الخطأ الإملائي (aجمالي -> اجمالي)
                 if 'اجمالي_التكلفة' in row:
                     df_orders.at[index, 'المتبقي'] = row['اجمالي_التكلفة'] - paid_amt 
 
-        # إعادة حساب المتبقي للجميع (للتأكد)
         df_orders['المتبقي'] = df_orders['اجمالي_التكلفة'] - df_orders['المدفوع']
 
         return df_orders, df_payments
@@ -176,41 +159,52 @@ with st.sidebar:
                 conn.update(worksheet="Sheet1", data=updated_df)
                 st.success("تمت الإضافة!"); st.cache_data.clear(); st.rerun()
 
-# --- 4. الكروت العلوية ---
+# --- 4. الكروت العلوية (المعدلة) ---
 if not df_orders.empty:
+    # الحسابات المالية
     total_cost_all = df_orders['اجمالي_التكلفة'].sum()
     total_paid = df_orders['المدفوع'].sum()
     total_rem = df_orders['المتبقي'].sum()
     val_in_transit = df_orders[df_orders['الحالة'].isin(["تم الشحن", "تخليص جمركي"])]['اجمالي_التكلفة'].sum()
-    total_orders = len(df_orders)
+    
+    # حسابات العدد (حسب طلبك الجديد)
+    # 1. الطلبات الجارية: كل شيء ما عدا (لم يبدأ) و (مسددة بالكامل)
+    cnt_active = len(df_orders[~df_orders['الحالة'].isin(["لم يبدأ", "مسددة بالكامل"])])
+    
+    # 2. الطلبات المكتملة: فقط المسددة بالكامل
+    cnt_completed_final = len(df_orders[df_orders['الحالة'] == "مسددة بالكامل"])
+    
+    # 3. الباقي
     cnt_shipped = len(df_orders[df_orders['الحالة'] == "تم الشحن"])
     cnt_customs = len(df_orders[df_orders['الحالة'] == "تخليص جمركي"])
-    cnt_arrived = len(df_orders[df_orders['الحالة'].isin(["وصلت للمستودع", "مسددة بالكامل"])])
 else:
     total_cost_all = 0; total_paid = 0; total_rem = 0; val_in_transit = 0
-    total_orders = 0; cnt_shipped = 0; cnt_customs = 0; cnt_arrived = 0
+    cnt_active = 0; cnt_completed_final = 0; cnt_shipped = 0; cnt_customs = 0
 
+# السطر الأول: المالي
 k1, k2, k3, k4 = st.columns(4)
-k1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الالتزام</div><div class="metric-value">{total_cost_all:,.0f}</div></div>', unsafe_allow_html=True)
+k1.markdown(f'<div class="metric-card"><div class="metric-title">مستهدف مشتريات السنة</div><div class="metric-value">{total_cost_all:,.0f}</div></div>', unsafe_allow_html=True)
 k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع</div><div class="metric-value" style="color:#27ae60 !important">{total_paid:,.0f}</div></div>', unsafe_allow_html=True)
 k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي</div><div class="metric-value" style="color:#c0392b !important">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
-k4.markdown(f'<div class="metric-card"><div class="metric-title">بضاعة بالطريق</div><div class="metric-value" style="color:#e67e22 !important">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
+k4.markdown(f'<div class="metric-card"><div class="metric-title">بضاعة بالطريق (مالي)</div><div class="metric-value" style="color:#e67e22 !important">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# السطر الثاني: الأعداد (التحديث الجديد)
 s1, s2, s3, s4 = st.columns(4)
-s1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الطلبات</div><div class="metric-value">{total_orders}</div></div>', unsafe_allow_html=True)
-s2.markdown(f'<div class="metric-card"><div class="metric-title">شحنات في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div></div>', unsafe_allow_html=True)
-s3.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div></div>', unsafe_allow_html=True)
-s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60 !important">{cnt_arrived}</div></div>', unsafe_allow_html=True)
+s1.markdown(f'<div class="metric-card"><div class="metric-title">الطلبات المعتمدة/الجارية</div><div class="metric-value">{cnt_active}</div></div>', unsafe_allow_html=True)
+s2.markdown(f'<div class="metric-card"><div class="metric-title">الطلبات المكتملة (مسددة)</div><div class="metric-value" style="color:#27ae60 !important">{cnt_completed_final}</div></div>', unsafe_allow_html=True)
+s3.markdown(f'<div class="metric-card"><div class="metric-title">في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div></div>', unsafe_allow_html=True)
+s4.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div></div>', unsafe_allow_html=True)
 
 st.divider()
 
-# --- 5. الجدول الزمني ---
+# --- 5. الجدول الزمني (المحسن) ---
 st.subheader("🗓️ الجدول الزمني للطلبات")
 if not df_orders.empty:
     timeline_data = []
     today = datetime.now()
+    # عنصر وهمي لضبط المقياس
     timeline_data.append(dict(Task="-- Scale --", Start=today, Finish=today + timedelta(days=365), Stage="Scale", Color="rgba(0,0,0,0)"))
 
     for _, row in df_orders.iterrows():
@@ -247,11 +241,24 @@ if not df_orders.empty:
             fig = px.timeline(
                 df_clean, x_start="Start", x_end="Finish", y="Task", color="Color",
                 title="", color_discrete_map="identity",
-                height=350 + (len(df_orders)*30), template="plotly_white"
+                height=350 + (len(df_orders)*40), template="plotly_dark"
             )
-            fig.update_xaxes(tickformat="%b %Y", dtick="M1", ticklabelmode="period", range=[today - timedelta(days=30), today + timedelta(days=300)], side="top")
-            fig.update_yaxes(autorange="reversed", title="")
-            fig.update_layout(showlegend=False, margin=dict(l=10, r=10, t=30, b=10), xaxis_gridcolor='#f0f0f0')
+            # تحديثات الشبكة (Grid Lines)
+            fig.update_xaxes(
+                tickformat="%b %Y", dtick="M1", ticklabelmode="period", 
+                range=[today - timedelta(days=30), today + timedelta(days=300)], side="top",
+                showgrid=True, gridwidth=1, gridcolor='#444444' # خطوط رأسية للأشهر
+            )
+            fig.update_yaxes(
+                autorange="reversed", title="",
+                showgrid=True, gridwidth=1, gridcolor='#444444' # خطوط أفقية للطلبات
+            )
+            fig.update_layout(
+                showlegend=False, 
+                margin=dict(l=10, r=10, t=30, b=10),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
             st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
@@ -296,7 +303,6 @@ with c_right:
 
             current_order = df_orders[df_orders['ID'] == selected_id].iloc[0]
             
-            # --- 1. عرض ملخص الطلب ---
             st.markdown(f"""
             <div class="plan-box">
             <b>{current_order['الطلبية']}</b> (الحالة: {current_order['الحالة']})<br>
@@ -304,7 +310,6 @@ with c_right:
             </div>
             """, unsafe_allow_html=True)
             
-            # --- 2. عرض سجل الدفعات السابقة (History) ---
             if not df_payments.empty:
                 history = df_payments[df_payments['OrderID'] == selected_id]
                 if not history.empty:
@@ -318,7 +323,6 @@ with c_right:
                         }
                     )
             
-            # --- 3. نموذج إضافة دفعة جديدة ---
             st.markdown("---")
             st.markdown("##### ➕ تسجيل عملية جديدة")
             
@@ -328,13 +332,11 @@ with c_right:
                 pay_note = st.text_input("البيان / الوصف (مثلاً: دفعة مقدمة)")
                 pay_link = st.text_input("رابط السند (Google Drive Link)")
                 
-                # تحديث الحالة أيضاً
                 try: idx_status = STATUS_LIST.index(current_order['الحالة'])
                 except: idx_status = 0
                 new_status = st.selectbox("تحديث حالة الطلب بالمرة؟", STATUS_LIST, index=idx_status)
                 
                 if st.form_submit_button("💾 حفظ الدفعة وتحديث الحالة"):
-                    # 1. إضافة الدفعة لجدول الدفعات
                     new_pid = 1
                     if not df_payments.empty and 'PaymentID' in df_payments.columns and len(df_payments) > 0:
                         try: new_pid = int(df_payments['PaymentID'].max()) + 1
@@ -349,7 +351,6 @@ with c_right:
                     updated_payments = pd.concat([df_payments, new_payment_row], ignore_index=True)
                     conn.update(worksheet="payments", data=updated_payments)
                     
-                    # 2. تحديث حالة الطلبية والتواريخ (Logic)
                     idx = df_orders.index[df_orders['ID'] == selected_id][0]
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     
