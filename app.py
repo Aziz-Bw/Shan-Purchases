@@ -18,14 +18,11 @@ st.markdown("""
     }
     .metric-title { font-size: 13px; color: #666; margin-bottom: 5px; font-weight: bold; }
     .metric-value { font-size: 20px; font-weight: bold; color: #034275; }
+    .metric-sub { font-size: 11px; color: #27ae60; margin-top: 3px; }
     
     .plan-box {
         background-color: #f8f9fa; border-right: 4px solid #27ae60;
         padding: 10px; margin-bottom: 10px; border-radius: 5px; font-size: 13px;
-    }
-    
-    .date-badge {
-        background-color: #e3f2fd; color: #1565c0; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold;
     }
     
     div.stButton > button:first-child { border-radius: 5px; font-weight: bold; }
@@ -43,7 +40,6 @@ def load_data():
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
         
-        # الأعمدة الجديدة للتواريخ
         columns = [
             "ID", "الطلبية", "المورد", "القيمة_دولار", "سعر_الصرف", 
             "قيمة_البضاعة_ريال", "رسوم_شحن_تخليص", "اجمالي_التكلفة", 
@@ -55,6 +51,7 @@ def load_data():
         
         if df.empty: return pd.DataFrame(columns=columns)
         
+        # التأكد من الأعمدة
         for col in columns:
             if col not in df.columns: df[col] = None
         
@@ -63,14 +60,17 @@ def load_data():
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
+        # إصلاح مشكلة المعرف (ID)
+        df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0).astype(int)
+            
         return df
     except:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=columns)
 
 df = load_data()
 
 # --- 3. الواجهة الرئيسية ---
-st.title("🚢 نظام إدارة المشتريات (الجدولة الذكية)")
+st.title("🚢 نظام إدارة المشتريات (اللوحة الكاملة)")
 
 # القائمة الجانبية (إضافة)
 with st.sidebar:
@@ -103,17 +103,14 @@ with st.sidebar:
         if submitted:
             if order_name and val_usd > 0:
                 new_id = 1
-                if not df.empty and 'ID' in df.columns and pd.notna(df['ID'].max()):
+                if not df.empty and 'ID' in df.columns and len(df) > 0:
                     try: new_id = int(df['ID'].max()) + 1
                     except: new_id = 1
                 
-                # منطق التواريخ الأولي (إذا بدأ بحالة متقدمة)
+                # منطق التواريخ الأولي
                 today_str = datetime.now().strftime("%Y-%m-%d")
-                exp_ship = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
-                exp_arrive = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
-                
                 d_conf = today_str if status == "تم الاعتماد" else None
-                d_ship_exp = exp_ship if status == "تم الاعتماد" else None
+                d_ship_exp = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d") if status == "تم الاعتماد" else None
                 
                 new_row = pd.DataFrame([{
                     "ID": new_id, "الطلبية": order_name, "المورد": supplier,
@@ -128,20 +125,40 @@ with st.sidebar:
                 conn.update(worksheet="Sheet1", data=updated_df)
                 st.success("تمت الإضافة!"); st.cache_data.clear(); st.rerun()
 
-# --- 4. لوحة الإحصائيات ---
+# --- 4. لوحة الإحصائيات (الشاملة) ---
 if not df.empty:
+    # ماليات
     total_cost_all = df['اجمالي_التكلفة'].sum()
     total_paid = df['المدفوع'].sum()
     total_rem = df['المتبقي'].sum()
     val_in_transit = df[df['الحالة'].isin(["تم الشحن", "تخليص جمركي"])]['اجمالي_التكلفة'].sum()
+    
+    # أعداد
+    total_orders = len(df)
+    cnt_shipped = len(df[df['الحالة'] == "تم الشحن"])
+    cnt_customs = len(df[df['الحالة'] == "تخليص جمركي"])
+    cnt_arrived = len(df[df['الحالة'].isin(["وصلت للمستودع", "مسددة بالكامل"])])
 else:
     total_cost_all = 0; total_paid = 0; total_rem = 0; val_in_transit = 0
+    total_orders = 0; cnt_shipped = 0; cnt_customs = 0; cnt_arrived = 0
 
+st.markdown("### 📊 الموقف المالي والتشغيلي")
+
+# الصف الأول: ماليات
 k1, k2, k3, k4 = st.columns(4)
 k1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الالتزام (بضاعة+رسوم)</div><div class="metric-value">{total_cost_all:,.0f}</div></div>', unsafe_allow_html=True)
 k2.markdown(f'<div class="metric-card"><div class="metric-title">المدفوع فعلياً</div><div class="metric-value" style="color:#27ae60">{total_paid:,.0f}</div></div>', unsafe_allow_html=True)
 k3.markdown(f'<div class="metric-card"><div class="metric-title">المتبقي للسداد</div><div class="metric-value" style="color:#c0392b">{total_rem:,.0f}</div></div>', unsafe_allow_html=True)
-k4.markdown(f'<div class="metric-card"><div class="metric-title">التزام بضاعة في الطريق</div><div class="metric-value" style="color:#e67e22">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
+k4.markdown(f'<div class="metric-card"><div class="metric-title">قيمة بضاعة في الطريق</div><div class="metric-value" style="color:#e67e22">{val_in_transit:,.0f}</div></div>', unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# الصف الثاني: تشغيل (أعداد)
+s1, s2, s3, s4 = st.columns(4)
+s1.markdown(f'<div class="metric-card"><div class="metric-title">إجمالي الطلبات</div><div class="metric-value">{total_orders}</div><div class="metric-sub">نشطة ومكتملة</div></div>', unsafe_allow_html=True)
+s2.markdown(f'<div class="metric-card"><div class="metric-title">شحنات في البحر/الجو</div><div class="metric-value">{cnt_shipped}</div><div class="metric-sub">تم الشحن</div></div>', unsafe_allow_html=True)
+s3.markdown(f'<div class="metric-card"><div class="metric-title">في الجمارك</div><div class="metric-value">{cnt_customs}</div><div class="metric-sub">تخليص</div></div>', unsafe_allow_html=True)
+s4.markdown(f'<div class="metric-card"><div class="metric-title">وصلت / انتهت</div><div class="metric-value" style="color:#27ae60">{cnt_arrived}</div><div class="metric-sub">في المستودع</div></div>', unsafe_allow_html=True)
 
 st.divider()
 
@@ -151,7 +168,6 @@ c_left, c_right = st.columns([2, 1])
 with c_left:
     st.subheader("📋 سجل المشتريات والتواريخ")
     
-    # عرض الأعمدة المهمة للجدولة
     col_config = {
         "ID": st.column_config.NumberColumn("#", width="small", disabled=True),
         "الطلبية": st.column_config.TextColumn(width="medium"),
@@ -165,7 +181,6 @@ with c_left:
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, column_config=col_config, key="main_editor")
     
     if st.button("💾 حفظ تعديلات الجدول"):
-        # إعادة حساب الرسوم
         edited_df['قيمة_البضاعة_ريال'] = edited_df['القيمة_دولار'] * edited_df['سعر_الصرف']
         edited_df['رسوم_شحن_تخليص'] = edited_df['القيمة_دولار'] * FEES_FACTOR
         edited_df['اجمالي_التكلفة'] = edited_df['قيمة_البضاعة_ريال'] + edited_df['رسوم_شحن_تخليص']
@@ -178,19 +193,26 @@ with c_right:
     st.subheader("⚙️ تحديث الحالة والجدولة")
     
     if not df.empty:
-        order_options = df['ID'].astype(str) + " - " + df['الطلبية']
+        # إصلاح الخطأ: التأكد من أن ID نصي نظيف قبل العرض
+        df['ID_str'] = df['ID'].astype(str)
+        order_options = df['ID_str'] + " - " + df['الطلبية']
         selected_option = st.selectbox("تحديد الطلبية:", order_options)
         
         if selected_option:
-            selected_id = int(str(selected_option).split(" - ")[0])
+            # إصلاح الخطأ: استخراج ID وتحويله لرقم صحيح بأمان
+            try:
+                selected_id = int(float(selected_option.split(" - ")[0]))
+            except:
+                st.error("خطأ في قراءة معرف الطلبية")
+                st.stop()
+
             current_order = df[df['ID'] == selected_id].iloc[0]
             
             curr_status = current_order['الحالة']
-            # عرض التواريخ الحالية
             st.markdown(f"""
             <div class="plan-box">
             📅 <b>الموقف الزمني:</b><br>
-            • الاعتماد الفعلي: {current_order.get('تاريخ_الاعتماد_الفعلي') or 'غير محدد'}<br>
+            • الاعتماد الفعلي: {current_order.get('تاريخ_الاعتماد_الفعلي') or '--'}<br>
             • الشحن المتوقع: <b>{current_order.get('تاريخ_الشحن_المتوقع') or '--'}</b><br>
             • الوصول المتوقع: <b>{current_order.get('تاريخ_الوصول_المتوقع') or '--'}</b>
             </div>
@@ -200,30 +222,24 @@ with c_right:
                 new_transfer = st.number_input("مبلغ دفعة جديدة (ريال)", min_value=0.0, step=1000.0)
                 try: idx_status = STATUS_LIST.index(curr_status)
                 except: idx_status = 0
-                new_status = st.selectbox("تحديث الحالة (سيحسب التواريخ تلقائياً)", STATUS_LIST, index=idx_status)
+                new_status = st.selectbox("تحديث الحالة", STATUS_LIST, index=idx_status)
                 
                 if st.form_submit_button("تنفيذ التحديث"):
                     idx = df.index[df['ID'] == selected_id][0]
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     
-                    # --- المنطق الذكي للتواريخ ---
-                    # 1. إذا تحولت إلى "تم الاعتماد"
+                    # منطق التواريخ
                     if new_status == "تم الاعتماد" and curr_status != "تم الاعتماد":
                         df.at[idx, 'تاريخ_الاعتماد_الفعلي'] = today_str
-                        # شحن متوقع بعد 30 يوم
                         df.at[idx, 'تاريخ_الشحن_المتوقع'] = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
                     
-                    # 2. إذا تحولت إلى "تم الشحن"
                     if new_status == "تم الشحن" and curr_status != "تم الشحن":
                         df.at[idx, 'تاريخ_الشحن_الفعلي'] = today_str
-                        # وصول متوقع بعد 30 يوم من الشحن
                         df.at[idx, 'تاريخ_الوصول_المتوقع'] = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
                         
-                    # 3. إذا تحولت إلى "وصلت"
                     if new_status in ["وصلت للمستودع", "مسددة بالكامل"] and curr_status not in ["وصلت للمستودع", "مسددة بالكامل"]:
                         df.at[idx, 'تاريخ_الوصول_الفعلي'] = today_str
 
-                    # تحديث الماليات والحالة
                     new_total_paid = current_order['المدفوع'] + new_transfer
                     df.at[idx, 'المدفوع'] = new_total_paid
                     df.at[idx, 'المتبقي'] = current_order['اجمالي_التكلفة'] - new_total_paid
@@ -233,22 +249,17 @@ with c_right:
                     st.success("تم تحديث الحالة والتواريخ والماليات!")
                     st.cache_data.clear(); st.rerun()
 
-# --- 6. النظرة المستقبلية (Timeline) ---
+# --- 6. النظرة المستقبلية ---
 st.divider()
 if not df.empty:
-    st.subheader("🔮 النظرة المستقبلية (القادم بالطريق)")
-    
-    # فلترة الشحنات التي لها تاريخ وصول متوقع ولم تصل بعد
     future = df[
         (df['تاريخ_الوصول_المتوقع'].notna()) & 
         (~df['الحالة'].isin(["وصلت للمستودع", "مسددة بالكامل"]))
     ].sort_values('تاريخ_الوصول_المتوقع')
     
     if not future.empty:
-        # تحويل الجدول لبيانات للعرض
+        st.subheader("🔮 النظرة المستقبلية (القادم بالطريق)")
         future_display = future[['الطلبية', 'المورد', 'الحالة', 'تاريخ_الوصول_المتوقع', 'اجمالي_التكلفة', 'المتبقي']].copy()
-        
-        # تنسيق الجدول بالألوان (Dataframe Styling)
         st.dataframe(
             future_display,
             use_container_width=True,
